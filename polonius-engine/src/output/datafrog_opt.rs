@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::Instant;
 
 use crate::output::Output;
@@ -19,6 +19,7 @@ use facts::{AllFacts, Atom};
 pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
     dump_enabled: bool,
     mut all_facts: AllFacts<Region, Loan, Point>,
+    possible_errors: Option<HashSet<Loan>>,
 ) -> Output<Region, Loan, Point> {
     // Declare that each universal region is live at every point.
     let all_points: BTreeSet<Point> = all_facts
@@ -148,11 +149,63 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
         invalidates.extend(all_facts.invalidates.iter().map(|&(p, b)| ((b, p), ())));
         region_live_at_var.extend(all_facts.region_live_at.iter().map(|&(r, p)| ((r, p), ())));
 
-        // subset(R1, R2, P) :- outlives(R1, R2, P).
-        subset_r1p.extend(all_facts.outlives.iter().map(|&(r1, r2, p)| ((r1, p), r2)));
+        // Use the pre-pass results to filter uninteresting input data from the `requires` and `subset` relations
+        if let Some(possible_errors) = possible_errors {
+            // 1) The "interesting" borrow regions are the ones referring to loans for which an error could occur
+            let interesting_borrow_region: Relation<_> = all_facts
+                .borrow_region
+                .iter()
+                .filter(|&(_r, l, _p)| possible_errors.contains(l))
+                .collect();
 
-        // requires(R, B, P) :- borrow_region(R, B, P).
-        requires_rp.extend(all_facts.borrow_region.iter().map(|&(r, b, p)| ((r, p), b)));
+            // 2) Limit the `requires` relation to interesting borrow regions
+            // requires(R, L, P) :- borrow_region(R, L, P).
+            requires_rp.extend(
+                interesting_borrow_region
+                    .iter()
+                    .map(|&(r, l, p)| ((r, p), l)),
+            );
+
+            // 3a) Find the interesting regions linked to interesting borrow regions
+            let interesting_region = {
+                let mut iteration = Iteration::new();
+
+                let outlives_r1 =
+                    Relation::from_iter(all_facts.outlives.iter().map(|&(r1, r2, _p)| (r1, r2)));
+                let interesting_region = iteration.variable::<(Region, ())>("interesting_region");
+
+                // interesting_region(R) :- interesting_borrow_region(R, _, _);
+                interesting_region
+                    .extend(interesting_borrow_region.iter().map(|&(r, _l, _p)| (r, ())));
+
+                while iteration.changed() {
+                    // interesting_region(R2) :-
+                    //     outlives(R1, R2, _),
+                    //     interesting_region(R1, _, _);
+                    interesting_region.from_join(
+                        &interesting_region,
+                        &outlives_r1,
+                        |_r1, (), &r2| (r2, ()),
+                    );
+                }
+
+                interesting_region.complete()
+            };
+
+            // 3b) Limit the `subset` relation to interesting regions
+            // subset(R1, R2, P) :- outlives(R1, R2, P).
+            let interesting_outlives = all_facts
+                .outlives
+                .iter()
+                .filter(|&(r1, _r2, _p)| interesting_region.contains(&(*r1, ())));
+            subset_r1p.extend(interesting_outlives.map(|&(r1, r2, p)| ((r1, p), r2)));
+        } else {
+            // requires(R, B, P) :- borrow_region(R, B, P).
+            requires_rp.extend(all_facts.borrow_region.iter().map(|&(r, b, p)| ((r, p), b)));
+
+            // subset(R1, R2, P) :- outlives(R1, R2, P).
+            subset_r1p.extend(all_facts.outlives.iter().map(|&(r1, r2, p)| ((r1, p), r2)));
+        }
 
         // .. and then start iterating rules!
         while iteration.changed() {

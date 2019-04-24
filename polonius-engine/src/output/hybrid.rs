@@ -16,6 +16,8 @@ use crate::output::location_insensitive;
 use crate::output::Output;
 use facts::{AllFacts, Atom};
 
+use std::collections::HashSet;
+
 pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
     dump_enabled: bool,
     all_facts: AllFacts<Region, Loan, Point>,
@@ -24,6 +26,11 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
     if lins_output.errors.is_empty() {
         lins_output
     } else {
-        datafrog_opt::compute(dump_enabled, all_facts)
+        let mut possible_errors = HashSet::default();
+        for (_, loans) in lins_output.errors {
+            possible_errors.extend(loans);
+        }
+
+        datafrog_opt::compute(dump_enabled, all_facts, Some(possible_errors))
     }
 }
