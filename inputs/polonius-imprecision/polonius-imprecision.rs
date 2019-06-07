@@ -6,11 +6,11 @@ fn unnecessary_error() {
     let mut y: (&u32,) = (&1,);
     let mut z = 2;
 
-    if false {
+    if random_bool() {
         y.0 = x.0; // creates `'x: 'y` subset relation
     }
 
-    if false {
+    if random_bool() {
         x.0 = &z; // creates `{L0} in 'x` constraint
         // at this point, we have `'x: 'y` and `{L0} in 'x`, so we also have `{L0} in 'y`
         drop(x.0);
@@ -46,7 +46,7 @@ fn flow_sensitive_equality_required() {
     let mut c: Vec<&u32> = vec![];
     let mut p: &mut Vec<&u32> = &mut c;
     let mut i = 22;
-    if false {
+    if random_bool() {
         p = &mut a;
         p.push(&i);
         drop(a);
@@ -62,6 +62,10 @@ fn flow_sensitive_equality_required() {
 }
 
 //
+
+fn random_bool() -> bool {
+    true
+}
 
 fn g() -> i32 {
     0
