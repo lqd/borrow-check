@@ -16,6 +16,8 @@ mod datafrog_opt;
 mod hybrid;
 mod location_insensitive;
 mod naive;
+mod prototype;
+
 use facts::{AllFacts, Atom};
 
 #[derive(Debug, Clone, Copy)]
@@ -26,19 +28,21 @@ pub enum Algorithm {
     /// Compare Naive and DatafrogOpt.
     Compare,
     Hybrid,
+    Prototype,
 }
 
 impl Algorithm {
     /// Optimized variants that ought to be equivalent to "naive"
     pub const OPTIMIZED: &'static [Algorithm] = &[Algorithm::DatafrogOpt];
 
-    pub fn variants() -> [&'static str; 5] {
+    pub fn variants() -> [&'static str; 6] {
         [
             "Naive",
             "DatafrogOpt",
             "LocationInsensitive",
             "Compare",
             "Hybrid",
+            "Prototype",
         ]
     }
 }
@@ -52,8 +56,9 @@ impl ::std::str::FromStr for Algorithm {
             "locationinsensitive" => Ok(Algorithm::LocationInsensitive),
             "compare" => Ok(Algorithm::Compare),
             "hybrid" => Ok(Algorithm::Hybrid),
+            "prototype" => Ok(Algorithm::Prototype),
             _ => Err(String::from(
-                "valid values: Naive, DatafrogOpt, LocationInsensitive, Compare, Hybrid",
+                "valid values: Naive, DatafrogOpt, LocationInsensitive, Compare, Hybrid, Prototype",
             )),
         }
     }
@@ -143,6 +148,7 @@ where
                 opt_output
             }
             Algorithm::Hybrid => hybrid::compute(dump_enabled, all_facts.clone()),
+            Algorithm::Prototype => prototype::compute(dump_enabled, all_facts.clone()),
         }
     }
 
