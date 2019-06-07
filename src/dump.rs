@@ -16,39 +16,39 @@ pub(crate) fn dump_output(
     intern: &InternerTables,
 ) -> io::Result<()> {
     dump_rows(
-        &mut writer_for(output_dir, "errors")?,
+        &mut writer_for(output_dir, &format!("errors: {}", output.errors.len()))?,
         intern,
         &output.errors,
     )?;
 
     if output.dump_enabled {
         dump_rows(
-            &mut writer_for(output_dir, "restricts")?,
+            &mut writer_for(output_dir, &format!("restricts: {}", output.restricts.len()))?,
             intern,
             &output.restricts,
         )?;
         dump_rows(
-            &mut writer_for(output_dir, "restricts_anywhere")?,
+            &mut writer_for(output_dir, &format!("restricts_anywhere: {}", output.restricts_anywhere.len()))?,
             intern,
             &output.restricts_anywhere,
         )?;
         dump_rows(
-            &mut writer_for(output_dir, "region_live_at")?,
+            &mut writer_for(output_dir, &format!("region_live_at: {}", output.region_live_at.len()))?,
             intern,
             &output.region_live_at,
         )?;
         dump_rows(
-            &mut writer_for(output_dir, "invalidates")?,
+            &mut writer_for(output_dir, &format!("invalidates: {}", output.invalidates.len()))?,
             intern,
             &output.invalidates,
         )?;
         dump_rows(
-            &mut writer_for(output_dir, "borrow_live_at")?,
+            &mut writer_for(output_dir, &format!("borrow_live_at: {}", output.borrow_live_at.len()))?,
             intern,
             &output.borrow_live_at,
         )?;
         dump_rows(
-            &mut writer_for(output_dir, "subset_anywhere")?,
+            &mut writer_for(output_dir, &format!("subset_anywhere: {}", output.subset_anywhere.len()))?,
             intern,
             &output.subset_anywhere,
         )?;
