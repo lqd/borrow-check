@@ -1,6 +1,6 @@
 //! A version of the Prototype analysis.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::time::Instant;
 
 use crate::output::Output;
@@ -32,48 +32,18 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
 
     let computation_start = Instant::now();
 
-    let errors = {
-        // Create a new iteration context, ...
+    // 1 - compute subsets TC
+    let subsets = {
         let mut iteration = Iteration::new();
 
-        // static inputs
-        let cfg_edge_rel: Relation<(Point, Point)> = all_facts.cfg_edge.into();
-        let killed_rel: Relation<(Loan, Point)> = all_facts.killed.into();
-
-        // .. some variables, ..
         let subset = iteration.variable::<(Region, Region, Point)>("subset");
-        let requires = iteration.variable::<(Region, Loan, Point)>("requires");
-        let borrow_live_at = iteration.variable::<((Loan, Point), ())>("borrow_live_at");
 
-        // `invalidates` facts, stored ready for joins
-        let invalidates = iteration.variable::<((Loan, Point), ())>("invalidates");
-
-        // different indices for `subset`.
         let subset_r1p = iteration.variable_indistinct("subset_r1p");
         let subset_r2p = iteration.variable_indistinct("subset_r2p");
 
-        // different index for `requires`.
-        let requires_rp = iteration.variable_indistinct("requires_rp");
-        let requires_r = iteration.variable_indistinct("requires_r");
+        // subset(R1, R2, P) :- outlives(R1, R2, P).
+        subset.insert(all_facts.outlives.clone().into());
 
-        // we need `region_live_at` in both variable and relation forms.
-        // (respectively, for the regular join and the leapjoin).
-        let region_live_at_var = iteration.variable::<((Region, Point), ())>("region_live_at");
-        let region_live_at_rel = Relation::from_iter(all_facts.region_live_at.iter().cloned());
-
-        // output
-        let errors = iteration.variable("errors");
-
-        // load initial facts.
-        subset.insert(all_facts.outlives.into());
-        requires.insert(all_facts.borrow_region.into());
-        invalidates.extend(all_facts.invalidates.iter().map(|&(p, b)| ((b, p), ())));
-        region_live_at_var.extend(all_facts.region_live_at.iter().map(|&(r, p)| ((r, p), ())));
-
-        //
-        let equals = iteration.variable::<(Region, Region)>("equals");
-
-        // .. and then start iterating rules!
         while iteration.changed() {
             // Cleanup step: remove symmetries
             // - remove regions which are `subset`s of themselves
@@ -93,36 +63,95 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
             subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
             subset_r2p.from_map(&subset, |&(r1, r2, p)| ((r2, p), r1));
 
-            requires_rp.from_map(&requires, |&(r, b, p)| ((r, p), b));
-            requires_r.from_map(&requires, |&(r, b, p)| (r, (b, p)));
-
-            // subset(R1, R2, P) :- outlives(R1, R2, P).
-            // Already loaded; outlives is static.
-
             // subset(R1, R3, P) :-
             //   subset(R1, R2, P),
             //   subset(R2, R3, P).
             subset.from_join(&subset_r2p, &subset_r1p, |&(_r2, p), &r1, &r3| (r1, r3, p));
+        }
 
-            // equals(R1, R2) :-
-            //   subset(R1, R2, P),
-            //   subset(R2, R1, P).
-            equals.from_join(&subset_r1p, &subset_r2p, |&(r1, _p), &r2, &_r3| (r1, r2));
+        subset.complete()
+    };
 
-            // requires(R, B, P) :- borrow_region(R, B, P).
-            // Already loaded; borrow_region is static.
+    println!("subset relation computed: {} tuples", subsets.elements.len());
 
-            // requires(R2, B, P) :-
-            //   requires(R1, B, P),
-            //   subset(R1, R2, P).
-            requires.from_join(&requires_rp, &subset_r1p, |&(_r1, p), &b, &r2| (r2, b, p));
+    // 2 - compute region equality
+    let equals = {
+        let sets: HashSet<_> = subsets.iter().collect();
+
+        Relation::from_iter(
+            subsets
+                .iter()
+                .filter(|(r1, r2, p)| sets.contains(&(*r2, *r1, *p)))
+                .map(|&(r1, r2, _)| (r1, r2)),
+        )
+    };
+    println!("equals relation computed: {} tuples", equals.elements.len());
+    // println!("equals: {:?}", equals.elements);
+
+    // 3 - compute provenance information and check illegal accesses
+    let errors = {
+        // Create a new iteration context, ...
+        let mut iteration = Iteration::new();
+
+        // static inputs
+        let subset = iteration.variable_indistinct::<(Region, Region, Point)>("subset");
+        subset.insert(subsets);
+
+        let equal = iteration.variable_indistinct::<(Region, Region)>("equal");
+        equal.insert(equals);
+
+        let cfg_edge_rel: Relation<(Point, Point)> = all_facts.cfg_edge.into();
+        let killed_rel: Relation<(Loan, Point)> = all_facts.killed.into();
+        
+        // .. some variables, ..        
+        let requires = iteration.variable::<(Region, Loan, Point)>("requires");
+        let borrow_live_at = iteration.variable::<((Loan, Point), ())>("borrow_live_at");
+
+        // `invalidates` facts, stored ready for joins
+        let invalidates = iteration.variable_indistinct::<((Loan, Point), ())>("invalidates");
+        invalidates.extend(all_facts.invalidates.iter().map(|&(p, b)| ((b, p), ())));
+
+        // different indices for `subset`.
+        let subset_r1p = iteration.variable_indistinct("subset_r1p");
+
+        // different index for `requires`.
+        let requires_rp = iteration.variable_indistinct("requires_rp");
+        let requires_r = iteration.variable_indistinct("requires_r");
+
+        // we need `region_live_at` in both variable and relation forms.
+        // (respectively, for the regular join and the leapjoin).
+        let region_live_at_var = iteration.variable_indistinct::<((Region, Point), ())>("region_live_at");
+        let region_live_at_rel = Relation::from_iter(all_facts.region_live_at.iter().cloned());
+
+        region_live_at_var.extend(all_facts.region_live_at.iter().map(|&(r, p)| ((r, p), ())));
+
+        // output
+        let errors = iteration.variable("errors");
+
+        // requires(R, L, P) :- borrow_region(R, L, P).
+        requires.insert(all_facts.borrow_region.into());
+
+        while iteration.changed() {
+            subset
+                .recent
+                .borrow_mut()
+                .elements
+                .retain(|&(r1, r2, _)| r1 != r2);
+
+            // remap fields to re-index by keys.
+            subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
+            requires_rp.from_map(&requires, |&(r, b, p)| ((r, p), b));
+            requires_r.from_map(&requires, |&(r, b, p)| (r, (b, p)));
 
             // requires(R2, L, P) :-
-            //   equals(R2, R1),
-            //   requires(R1, L, P);
-            requires.from_join(&equals, &requires_r, |&_r1, &r2, &(l, p)| {
-                (r2, l, p)
-            });
+            //   requires(R1, L, P),
+            //   subset(R1, R2, P).
+            requires.from_join(&requires_rp, &subset_r1p, |&(_r1, p), &l, &r2| (r2, l, p));
+
+            // contains(R1, L, P) :-
+            //   contains(R2, L, P),
+            //   equals(R1, R2).
+            requires.from_join(&requires_r, &equal, |&_r2, &(l, p), &r1| (r1, l, p));
 
             // requires(R, B, Q) :-
             //   requires(R, B, P),
@@ -146,7 +175,9 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
                 ((b, p), ())
             });
 
-            // .decl errors(B, P) :- invalidates(B, P), borrow_live_at(B, P).
+            // errors(B, P) :- 
+            //   invalidates(B, P), 
+            //   borrow_live_at(B, P).
             errors.from_join(&invalidates, &borrow_live_at, |&(b, p), &(), &()| (b, p));
         }
 
@@ -186,7 +217,6 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
             }
 
             let borrow_live_at = borrow_live_at.complete();
-            println!("borrow_live_at: {} tuples", borrow_live_at.len());
             for &((loan, location), ()) in &borrow_live_at.elements {
                 result
                     .borrow_live_at
