@@ -40,6 +40,29 @@ fn cfg_propagation_required(x: &mut &i32) {
     *y = &g();
 }
 
+fn flow_sensitive_equality_required() {
+    let mut a: Vec<&u32> = vec![];
+    let mut b: Vec<&u32> = vec![];
+    let mut c: Vec<&u32> = vec![];
+    let mut p: &mut Vec<&u32> = &mut c;
+    let mut i = 22;
+    if false {
+        p = &mut a;
+        p.push(&i);
+        drop(a);
+        i += 1; // `i` is no longer borrowed, ok
+        drop(b);
+    } else {
+        p = &mut b;
+        p.push(&i);
+        drop(b);
+        i += 1; // `i` is no longer borrowed, ok
+        drop(a);
+    }
+}
+
+//
+
 fn g() -> i32 {
     0
 }
