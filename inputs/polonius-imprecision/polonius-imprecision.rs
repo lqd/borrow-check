@@ -35,4 +35,13 @@ fn cycle_unification() {
     drop(v);
 }
 
+fn cfg_propagation_required(x: &mut &i32) {
+    let y = x;
+    *y = &g();
+}
+
+fn g() -> i32 {
+    0
+}
+
 fn main() {}
