@@ -4,7 +4,7 @@ use crate::facts::{AllFacts, Loan, Point, Region};
 use crate::intern;
 use crate::program::parse_from_program;
 use crate::tab_delim;
-use crate::test_util::assert_equal;
+use crate::test_util::{assert_equal, assert_equal_msg};
 use failure::Error;
 use polonius_engine::{Algorithm, Output};
 use rustc_hash::FxHashMap;
@@ -45,13 +45,20 @@ fn test_facts(all_facts: &AllFacts, algorithms: &[Algorithm]) {
     for &optimized_algorithm in algorithms {
         println!("Algorithm {:?}", optimized_algorithm);
         let opt = Output::compute(all_facts, optimized_algorithm, true);
-        assert_equal(&naive.borrow_live_at, &opt.borrow_live_at);
-        assert_equal(&naive.errors, &opt.errors);
+        // assert_equal_msg(&naive.borrow_live_at, &opt.borrow_live_at, "naive vs opt `borrow_live_at`");
+        assert_equal_msg(&naive.errors, &opt.errors, "naive vs opt `errors`");
     }
 
     // The hybrid algorithm gets the same errors as the naive version
     let opt = Output::compute(all_facts, Algorithm::Hybrid, true);
-    assert_equal(&naive.errors, &opt.errors);
+    assert_equal_msg(&naive.errors, &opt.errors, "naive vs hybrid `errors`");
+
+    // proto == naive
+    {
+        let opt = Output::compute(all_facts, Algorithm::Prototype, true);
+        // assert_equal_msg(&naive.borrow_live_at, &opt.borrow_live_at, "naive vs proto `borrow_live_at`");
+        assert_equal_msg(&naive.errors, &opt.errors, "naive vs proto `errors`");
+    }
 }
 
 fn test_fn(dir_name: &str, fn_name: &str, algorithm: Algorithm) -> Result<(), Error> {
@@ -75,6 +82,11 @@ macro_rules! tests {
                 #[test]
                 fn datafrog_opt() -> Result<(), Error> {
                     test_fn($dir, $fn, Algorithm::DatafrogOpt)
+                }
+
+                #[test]
+                fn prototype() -> Result<(), Error> {
+                    test_fn($dir, $fn, Algorithm::Prototype)
                 }
             }
         )*
@@ -281,6 +293,12 @@ fn smoke_test_errors() {
         assert!(
             !opt.errors.is_empty(),
             format!("DatafrogOpt didn't find errors for '{}'", test_fn)
+        );
+
+        let prototype = Output::compute(&facts, Algorithm::Prototype, true);
+        assert!(
+            !prototype.errors.is_empty(),
+            format!("Prototype didn't find errors for '{}'", test_fn)
         );
     }
 }
