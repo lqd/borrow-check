@@ -53,13 +53,22 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
 
         let potential_errors = iteration.variable::<(Loan, Point)>("potential_errors");
 
+        let invalidates_set = all_facts.invalidates.iter().map(|&(_p, l)| l).collect::<std::collections::HashSet<_>>();
+
         // load initial facts.
 
         // subset(R1, R2) :- outlives(R1, R2, _P)
         subset.extend(all_facts.outlives.iter().map(|&(r1, r2, _p)| (r1, r2)));
 
         // requires(R, B) :- borrow_region(R, B, _P).
-        requires.extend(all_facts.borrow_region.iter().map(|&(r, b, _p)| (r, b)));
+        requires.extend(
+            // Relation::from_iter(
+                all_facts.borrow_region
+                    .iter()
+                    .filter(|&(_r, l, _p)| invalidates_set.contains(&l)) // new
+                    .map(|&(r, b, _p)| (r, b))
+            // )
+        );
 
         // .. and then start iterating rules!
         while iteration.changed() {

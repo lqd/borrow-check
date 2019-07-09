@@ -52,6 +52,7 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
 
         // `invalidates` facts, stored ready for joins
         let invalidates = iteration.variable::<((Loan, Point), ())>("invalidates");
+        let invalidates_set = all_facts.invalidates.iter().map(|&(_p, l)| l).collect::<std::collections::HashSet<_>>();
 
         // we need `region_live_at` in both variable and relation forms.
         // (respectively, for join and antijoin).
@@ -144,7 +145,13 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
         let errors = iteration.variable("errors");
 
         // Make "variable" versions of the relations, needed for joins.
-        borrow_region_rp.extend(all_facts.borrow_region.iter().map(|&(r, b, p)| ((r, p), b)));
+        // borrow_region_rp.extend(all_facts.borrow_region.iter().map(|&(r, b, p)| ((r, p), b)));
+        borrow_region_rp.extend(
+            all_facts.borrow_region
+            .iter()
+            .filter(|&(_r, l, _p)| invalidates_set.contains(l)) // new
+            .map(|&(r, b, p)| ((r, p), b))
+        );        
         invalidates.extend(all_facts.invalidates.iter().map(|&(p, b)| ((b, p), ())));
         region_live_at_var.extend(all_facts.region_live_at.iter().map(|&(r, p)| ((r, p), ())));
 
@@ -152,7 +159,12 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
         subset_r1p.extend(all_facts.outlives.iter().map(|&(r1, r2, p)| ((r1, p), r2)));
 
         // requires(R, B, P) :- borrow_region(R, B, P).
-        requires_rp.extend(all_facts.borrow_region.iter().map(|&(r, b, p)| ((r, p), b)));
+        requires_rp.extend(
+            all_facts.borrow_region
+            .iter()
+            .filter(|&(_r, l, _p)| invalidates_set.contains(l)) // new
+            .map(|&(r, b, p)| ((r, p), b))
+        );
 
         // .. and then start iterating rules!
         while iteration.changed() {
@@ -193,6 +205,7 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
             dying_region_requires.from_leapjoin(
                 &requires_rp,
                 (
+                    // invalidates_rel.filter_with(|&((_r, _p), l)| (l, ())), // new
                     killed_rel.filter_anti(|&((_, p), b)| (b, p)),
                     cfg_edge_rel.extend_with(|&((_, p), _)| p),
                     region_live_at_rel.extend_anti(|&((r, _), _)| r),

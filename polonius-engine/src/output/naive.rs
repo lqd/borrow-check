@@ -57,6 +57,7 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
 
         // `invalidates` facts, stored ready for joins
         let invalidates = iteration.variable::<((Loan, Point), ())>("invalidates");
+        let invalidates_set = all_facts.invalidates.iter().map(|&(_p, l)| l).collect::<std::collections::HashSet<_>>();
 
         // different indices for `subset`.
         let subset_r1p = iteration.variable_indistinct("subset_r1p");
@@ -75,7 +76,15 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
 
         // load initial facts.
         subset.insert(all_facts.outlives.into());
-        requires.insert(all_facts.borrow_region.into());
+        // requires.insert(all_facts.borrow_region.into());
+        requires.insert(
+            Relation::from_iter(
+                all_facts
+                    .borrow_region
+                    .into_iter()
+                    .filter(|&(_r, l, _p)| invalidates_set.contains(&l)) // new
+            )
+        );
         invalidates.extend(all_facts.invalidates.iter().map(|&(p, b)| ((b, p), ())));
         region_live_at_var.extend(all_facts.region_live_at.iter().map(|&(r, p)| ((r, p), ())));
 
@@ -215,6 +224,7 @@ pub(super) fn compute<Region: Atom, Loan: Atom, Point: Atom>(
     }
 
     for (borrow, location) in &errors.elements {
+        // println!("error: {:?} at {:?}", borrow, location);
         result
             .errors
             .entry(*location)
