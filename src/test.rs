@@ -54,6 +54,19 @@ fn test_facts(all_facts: &AllFacts, algorithms: &[Algorithm]) {
     // The hybrid algorithm gets the same errors as the naive version
     let opt = Output::compute(all_facts, Algorithm::Hybrid, true);
     assert_equal(&naive.errors, &opt.errors);
+
+    // The prototype variant should have the same errors as the Naive variant
+    // (as the test cases don't experience the "unnecessary error" imprecision)
+    {
+        let variant = Output::compute(all_facts, Algorithm::Prototype, true);
+
+        // but they don't have the same loans yet (the prototype variant only tracks "interesting loans")
+        // println!("naive vs proto `borrow_live_at`");
+        // assert_equal(&naive.borrow_live_at, &variant.borrow_live_at);
+
+        println!("naive vs proto `errors`");
+        assert_equal(&naive.errors, &variant.errors);
+    }
 }
 
 fn test_fn(dir_name: &str, fn_name: &str, algorithm: Algorithm) -> Result<(), Box<dyn Error>> {
@@ -78,6 +91,11 @@ macro_rules! tests {
                 fn datafrog_opt() -> Result<(), Box<dyn Error>> {
                     test_fn($dir, $fn, Algorithm::DatafrogOpt)
                 }
+
+                #[test]
+                fn prototype() -> Result<(), Box<dyn Error>> {
+                    test_fn($dir, $fn, Algorithm::Prototype)
+                }
             }
         )*
     }
@@ -88,6 +106,8 @@ tests! {
     vec_push_ref_foo1("vec-push-ref", "foo1"),
     vec_push_ref_foo2("vec-push-ref", "foo2"),
     vec_push_ref_foo3("vec-push-ref", "foo3"),
+    polonius_imprecision_cycle_unification("polonius-imprecision", "cycle_unification"),
+    polonius_imprecision_cfg_propagation_required("polonius-imprecision", "cfg_propagation_required"),
 }
 
 // The `clap` dataset is an important benchmark, and slow enough that's it not checked in tests.
@@ -199,6 +219,7 @@ fn send_is_not_static_std_sync() {
     let mut tables = intern::InternerTables::new();
     let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
     test_facts(&facts, Algorithm::OPTIMIZED);
+    test_facts(&facts, &[Algorithm::Prototype]);
 }
 
 #[test]
@@ -217,6 +238,7 @@ fn escape_upvar_nested() {
     let mut tables = intern::InternerTables::new();
     let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
     test_facts(&facts, Algorithm::OPTIMIZED);
+    test_facts(&facts, &[Algorithm::Prototype]);
 }
 
 #[test]
@@ -240,6 +262,7 @@ fn issue_31567() {
     let mut tables = intern::InternerTables::new();
     let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
     test_facts(&facts, Algorithm::OPTIMIZED);
+    test_facts(&facts, &[Algorithm::Prototype]);
 }
 
 #[test]
@@ -266,6 +289,7 @@ fn borrowed_local_error() {
     let mut tables = intern::InternerTables::new();
     let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
     test_facts(&facts, Algorithm::OPTIMIZED);
+    test_facts(&facts, &[Algorithm::Prototype]);
 }
 
 #[test]
@@ -304,6 +328,12 @@ fn smoke_test_errors() {
             !opt.errors.is_empty(),
             format!("DatafrogOpt didn't find errors for '{}'", test_fn)
         );
+
+        let prototype = Output::compute(&facts, Algorithm::Prototype, true);
+        assert!(
+            !prototype.errors.is_empty(),
+            format!("Prototype didn't find errors for '{}'", test_fn)
+        );
     }
 }
 
@@ -322,6 +352,7 @@ fn smoke_test_success_1() {
     assert!(!location_insensitive.errors.is_empty());
 
     test_facts(&facts, Algorithm::OPTIMIZED);
+    test_facts(&facts, &[Algorithm::Prototype]);
 }
 
 #[test]
@@ -339,6 +370,7 @@ fn smoke_test_success_2() {
     assert!(location_insensitive.errors.is_empty());
 
     test_facts(&facts, Algorithm::OPTIMIZED);
+    test_facts(&facts, &[Algorithm::Prototype]);
 }
 
 #[test]
@@ -651,6 +683,10 @@ fn successes_in_subset_relations_dataset() {
         let result = Output::compute(&facts, Algorithm::Naive, true);
         assert!(result.errors.is_empty());
         assert!(result.subset_errors.is_empty());
+
+        let proto = Output::compute(&facts, Algorithm::Prototype, true);
+        assert_eq!(result.errors, proto.errors);
+        assert_eq!(result.subset_errors, proto.subset_errors);
     }
 }
 
@@ -684,6 +720,10 @@ fn errors_in_subset_relations_dataset() {
         // that is the subset error we should find
         assert!(subset_error.contains(&(origin_b, origin_a)));
     }
+
+    let proto = Output::compute(&facts, Algorithm::Prototype, true);
+    assert_eq!(result.errors, proto.errors);
+    assert_eq!(result.subset_errors, proto.subset_errors);
 }
 
 // There's only a single successful test in the dataset for now, but the structure of this test
