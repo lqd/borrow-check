@@ -15,7 +15,7 @@ pub(super) fn compute<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom, Mov
     all_facts: AllFacts<Origin, Loan, Point, Variable, MovePath>,
 ) -> Output<Origin, Loan, Point, Variable, MovePath> {
     
-    let use_flow_sensitive_equality = false;
+    let use_flow_sensitive_equality = std::env::var("POLONIUS_FLOW_SENSITIVE").is_ok();
     if use_flow_sensitive_equality {
         compute_flow_sensitive_equality(dump_enabled, all_facts)
     } else {
@@ -23,8 +23,7 @@ pub(super) fn compute<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom, Mov
     }
 }
 
-// Prototype variant: doesn't work, misses errors eg polonius-imprecision/cycle_unification. Of course it's worse in rustc
-// with 16 test failures (some expected to fail but didn't, some with less errors reported than expected)
+// Prototype variant: works probably like `compute_static_equality`, ie probably 2 failures in rustc
 fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom, MovePath: Atom>(
     dump_enabled: bool,
     all_facts: AllFacts<Origin, Loan, Point, Variable, MovePath>,
@@ -55,16 +54,20 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
 
     let computation_start = Instant::now();
 
-    //
+    // The invalidated loans are the only loans which could cause errors
     let invalidates_set = all_facts.invalidates.iter().map(|&(_p, l)| l).collect::<HashSet<_>>();
 
+    // The "interesting" borrow regions are the ones referring to loans for which an error could occur
+    let start = Instant::now();
     let interesting_borrow_region: Relation<_> = all_facts
                 .borrow_region
                 .iter()
                 .filter(|&(_r, l, _p)| invalidates_set.contains(l))
                 .collect();
-    // println!("interesting_borrow_region relation computed: {} tuples vs {}", interesting_borrow_region.len(), all_facts.borrow_region.len());
+    println!("interesting_borrow_region relation computed: {} tuples vs {}, in {} ms", interesting_borrow_region.len(), all_facts.borrow_region.len(), start.elapsed().as_millis());
 
+    // The interesting regions are any region into which an interesting loan could flow
+    let start = Instant::now();
     let interesting_region = {
         let mut iteration = Iteration::new();
 
@@ -90,6 +93,10 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
         interesting_region.complete().iter().map(|&(r1, _)| r1).collect::<HashSet<_>>()
     };
 
+    println!("interesting_region relation computed: {} tuples, in {} ms", interesting_region.len(), start.elapsed().as_millis());
+
+    // Limit the `subset` relation to interesting regions
+    
     let interesting_outlives = all_facts
             .outlives
             .iter()
@@ -102,6 +109,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
     // into origins (interesting origins) can be the source of errors if they're live
     // when the loan is invalidated. Any origin not containing an interesting loan
     // will be filtered out by the end of the computation anyway.
+    let start = Instant::now();
     let subsets = {
         let mut iteration = Iteration::new();
 
@@ -142,12 +150,13 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
     };
     debug_assert_eq!(subsets.iter().filter(|&(r1, r2, _)| r1 == r2).count(), 0);
 
-    // println!("subsets relation computed: {} tuples", subsets.len());
+    println!("subsets relation computed: {} tuples in {} ms", subsets.len(), start.elapsed().as_millis());
     // println!("subsets: {:#?}", subsets.elements);
 
     // 2 - compute region equality
     // (could be done in datalog, not the case here just 
     // for flexibility and verification purposes while developping the variant)
+    // let start = Instant::now();
     let equals = {
         let sets: HashSet<_> = subsets.iter().collect();
         Relation::from_iter(
@@ -159,7 +168,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
     };
     debug_assert_eq!(equals.iter().filter(|&((r1, _p), r2)| r1 == r2).count(), 0);
 
-    // println!("equals relation computed: {} tuples", equals.len());
+    // println!("equals relation computed: {} tuples in {} ms", equals.len(), start.elapsed().as_millis());
     // println!("equals: {:?}", equals.elements);
 
     // 3 - compute provenance information and check illegal accesses
@@ -184,8 +193,6 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
         let invalidates = iteration.variable_indistinct::<((Loan, Point), ())>("invalidates");
         invalidates.extend(all_facts.invalidates.iter().map(|&(p, b)| ((b, p), ())));
 
-        let invalidates_set = all_facts.invalidates.iter().map(|&(_p, l)| l).collect::<HashSet<_>>();
-
         // different index for `requires`.
         let requires_rp = iteration.variable_indistinct("requires_rp");
 
@@ -205,15 +212,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
         // efficiency: limit computing this relation to "interesting loans". The others _cannot_ produce errors, 
         // so they would be filtered out by the end of the computation anyway. We'll filter them out early
         // and not track them along the CFG.
-        requires.insert(
-            Relation::from_iter(
-                all_facts
-                    .borrow_region
-                    .into_iter()
-                    .filter(|&(_r, l, _p)| invalidates_set.contains(&l))
-            )
-        );
-        // the optimisation doesn't cause the cycle_unification error
+        requires.insert(interesting_borrow_region);
 
         while iteration.changed() {
             requires_rp.from_map(&requires, |&(r, b, p)| ((r, p), b));
@@ -232,41 +231,24 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
             //     |&(_r1, l, p), &r2| (r2, l, p),
             // );
 
-            // original prototype rule from https://github.com/rust-lang/polonius/issues/107#issue-452778031: static equality
-            //
-            // // requires(R2, L, P) :-
-            // //   requires(R1, L, P),
-            // //   equals(R1, R2)
-            // // requires.from_join(&requires_r, &equal, |&_r2, &(l, p), &r1| (r1, l, p));
-            // requires.from_leapjoin(
-            //     &requires,
-            //     (
-            //         equals.extend_with(|&(r, _l, _p)| r),
-            //     ),
-            //     |&(_r1, l, p), &r2| (r2, l, p),
-            // );
-
             // flow sensitive equality derived from https://github.com/rust-lang/polonius/issues/107#issuecomment-499427026 ...
             //
             // requires(R2, L, P) :-
             //   requires(R1, L, P),
-            //   equals(R1, R2, P).
+            //   equal(R1, R2, P).
             requires.from_join(&requires_rp, &equal_r1p, |&(_r1, p), &l, &r2| (r2, l, p));
 
-            // ... and which could be wrong, especially here: 
-            // propagating equality requiring the origins be live at the end point
-            //
-            // equals(R1, R2, Q) :-
-            //   equals(R1, R2, P),
-            //   cfg_edge(P, Q),
-            //   region_live_at(R1, Q), ?
-            //   region_live_at(R2, Q). ?
+            // equal(R1, R2, Q) :-
+            //   equal(R1, R2, P),
+            //   cfg_edge(P, Q).
             equal_r1p.from_leapjoin(
                 &equal_r1p,
                 (
                     cfg_edge_rel.extend_with(|&((_r1, p), _r2)| p),
-                    region_live_at_rel.extend_with(|&((r1, _p), _r2)| r1),
-                    region_live_at_rel.extend_with(|&((_r1, _p), r2)| r2),
+                    datafrog::ValueFilter::from(|&(_r1, _p), &_r2| true)
+                    // ^^^ HACK: either have Leapers of size 1
+                    // or introduce a `equal_p` index to use a regular join
+                    // best to compare both to see how they each perform
                 ),
                 |&((r1, _p), r2), &q| ((r1, q), r2),
             );
@@ -430,7 +412,6 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
 
         interesting_region.complete().iter().map(|&(r1, _)| r1).collect::<HashSet<_>>()
     };
-
     // println!("interesting_region relation computed: {} tuples", interesting_region.len());
 
     let interesting_outlives = all_facts
@@ -459,7 +440,7 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
         while iteration.changed() {
             subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
 
-            // a leaper which removes symmetries: origins which are `subsets` of themselves
+            // a leaper that removes symmetries: origins which are `subsets` of themselves
             let remove_symmetries = datafrog::ValueFilter::from(|&((r1, _p), _r2), &r3| r1 != r3);
 
             // subset(R1, R3, P) :-
@@ -479,19 +460,27 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
         subset.complete()
     };
     debug_assert_eq!(subsets.iter().filter(|&(r1, r2, _)| r1 == r2).count(), 0);
-
     // println!("subset relation computed: {} tuples", subsets.elements.len());
 
     // 2 - compute region equality
     let equals = {
+        // equal at *some point*
         let sets: HashSet<_> = subsets.iter().collect();
-
         Relation::from_iter(
             subsets
                 .iter()
                 .filter(|(r1, r2, p)| sets.contains(&(*r2, *r1, *p)))
                 .map(|&(r1, r2, _)| (r1, r2)),
         )
+
+        // equal at *any point*
+        // let sets: HashSet<_> = subsets.iter().map(|&(r1, r2, _)| (r1, r2)).collect();
+        // Relation::from_iter(
+        //     subsets
+        //         .iter()
+        //         .filter(|(r1, r2, _)| sets.contains(&(*r2, *r1)))
+        //         .map(|&(r1, r2, _)| (r1, r2))
+        // )
     };
     // println!("equals relation computed: {} tuples", equals.elements.len());
     // println!("equals: {:?}", equals.elements);
