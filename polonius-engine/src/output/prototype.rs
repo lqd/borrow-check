@@ -15,7 +15,18 @@ pub(super) fn compute<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom, Mov
     all_facts: AllFacts<Origin, Loan, Point, Variable, MovePath>,
 ) -> Output<Origin, Loan, Point, Variable, MovePath> {
     
-    let use_flow_sensitive_equality = std::env::var("POLONIUS_FLOW_SENSITIVE").is_ok();
+    let use_flow_sensitive_equality = {
+        if let Ok(flag) = std::env::var("POLONIUS_FLOW_SENSITIVE") {
+            match flag.as_ref() {
+                "0" => false,
+                "1" => true,
+                _ => flag.parse::<bool>().unwrap_or(false)
+            }            
+        } else {
+            false
+        }
+    };
+
     if use_flow_sensitive_equality {
         compute_flow_sensitive_equality(dump_enabled, all_facts)
     } else {
@@ -101,7 +112,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
             .outlives
             .iter()
             .filter(|&(r1, _r2, _p)| interesting_region.contains(r1));
-    // println!("interesting_outlives relation computed: {} tuples vs {}", interesting_outlives.clone().count(), all_facts.outlives.len());
+    println!("interesting_outlives relation computed: {} tuples vs {}", interesting_outlives.clone().count(), all_facts.outlives.len());
 
     // 1 - compute subsets TC
     // Subset filtering optimization: there's no need to do the TC
@@ -169,7 +180,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
     };
     debug_assert_eq!(equals.iter().filter(|&((r1, _p), r2)| r1 == r2).count(), 0);
 
-    // println!("equals relation computed: {} tuples in {} ms", equals.len(), start.elapsed().as_millis());
+    println!("equals relation computed: {} tuples in {} ms", equals.len(), start.elapsed().as_millis());
     // println!("equals: {:?}", equals.elements);
 
     // 3 - compute provenance information and check illegal accesses
