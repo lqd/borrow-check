@@ -129,7 +129,8 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
         while iteration.changed() {
             subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
 
-            // a leaper which removes symmetries: origins which are `subsets` of themselves
+            // a leaper that removes symmetries from proposed values to the
+            // leapjoin: origins which are `subsets` of themselves
             let remove_symmetries = datafrog::ValueFilter::from(|&((r1, _p), _r2), &r3| r1 != r3);
 
             // subset(R1, R3, P) :-
@@ -222,7 +223,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
             //   subset(R1, R2, P).
             requires.from_join(&requires_rp, &subsets_r1p, |&(_r1, p), &l, &r2| (r2, l, p));
             
-            // the following is the same join, but if Leapers of size 1 were added to datafrog
+            // the following is the same join, but if Leapers of size 1 were added back to datafrog
             // requires.from_leapjoin(
             //     &requires,
             //     (
@@ -245,7 +246,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
                 &equal_r1p,
                 (
                     cfg_edge_rel.extend_with(|&((_r1, p), _r2)| p),
-                    datafrog::ValueFilter::from(|&(_r1, _p), &_r2| true)
+                    datafrog::PrefixFilter::from(|_| true)
                     // ^^^ HACK: either have Leapers of size 1
                     // or introduce a `equal_p` index to use a regular join
                     // best to compare both to see how they each perform
@@ -280,6 +281,19 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
             //   invalidates(B, P),
             //   borrow_live_at(B, P).
             errors.from_join(&invalidates, &borrow_live_at, |&(b, p), &(), &()| (b, p));
+
+            // note: the 2 previous joins could be expressed as a single leapjoin when we relax
+            // the WF-ness in datafrog, like this (which compiles but will fail at runtime, because
+            // there is no `extend_` call):
+            //
+            // errors.from_leapjoin(
+            //     &requires,
+            //     (
+            //         invalidates_rel.filter_with(|&(r, b, p)| (b, p)),
+            //         region_live_at_rel.filter_with(|&(r, b, p)| (r, b)),
+            //     ),
+            //     |&(r, b, p), ()| (b, p)
+            // );
         }
 
         if dump_enabled {
@@ -440,7 +454,8 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
         while iteration.changed() {
             subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
 
-            // a leaper that removes symmetries: origins which are `subsets` of themselves
+            // a leaper that removes symmetries from proposed values to the
+            // leapjoin: origins which are `subsets` of themselves
             let remove_symmetries = datafrog::ValueFilter::from(|&((r1, _p), _r2), &r3| r1 != r3);
 
             // subset(R1, R3, P) :-
@@ -464,7 +479,6 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
 
     // 2 - compute region equality
     let equals = {
-        // equal at *some point*
         let sets: HashSet<_> = subsets.iter().collect();
         Relation::from_iter(
             subsets
@@ -472,15 +486,6 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
                 .filter(|(r1, r2, p)| sets.contains(&(*r2, *r1, *p)))
                 .map(|&(r1, r2, _)| (r1, r2)),
         )
-
-        // equal at *any point*
-        // let sets: HashSet<_> = subsets.iter().map(|&(r1, r2, _)| (r1, r2)).collect();
-        // Relation::from_iter(
-        //     subsets
-        //         .iter()
-        //         .filter(|(r1, r2, _)| sets.contains(&(*r2, *r1)))
-        //         .map(|&(r1, r2, _)| (r1, r2))
-        // )
     };
     // println!("equals relation computed: {} tuples", equals.elements.len());
     // println!("equals: {:?}", equals.elements);
@@ -550,8 +555,8 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
             //   subset(R1, R2, P).
             requires.from_join(&requires_rp, &subset_r1p, |&(_r1, p), &l, &r2| (r2, l, p));
 
-            // contains(R1, L, P) :-
-            //   contains(R2, L, P),
+            // requires(R1, L, P) :-
+            //   requires(R2, L, P),
             //   equals(R1, R2).
             requires.from_join(&requires_r, &equal, |&_r2, &(l, p), &r1| (r1, l, p));
 
@@ -581,6 +586,19 @@ fn compute_static_equality<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom
             //   invalidates(B, P), 
             //   borrow_live_at(B, P).
             errors.from_join(&invalidates, &borrow_live_at, |&(b, p), &(), &()| (b, p));
+
+            // note: the 2 previous joins could be expressed as a single leapjoin when we relax
+            // the WF-ness in datafrog, like this (which compiles but will fail at runtime, because
+            // there is no `extend_` call):
+            //
+            // errors.from_leapjoin(
+            //     &requires,
+            //     (
+            //         invalidates_rel.filter_with(|&(r, b, p)| (b, p)),
+            //         region_live_at_rel.filter_with(|&(r, b, p)| (r, b)),
+            //     ),
+            //     |&(r, b, p), ()| (b, p)
+            // );
         }
 
         if dump_enabled {
