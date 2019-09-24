@@ -195,7 +195,14 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
         equal_r1p.insert(equals);
 
         let cfg_edge_rel: Relation<(Point, Point)> = all_facts.cfg_edge.into();
-        let killed_rel: Relation<(Loan, Point)> = all_facts.killed.into();
+
+        // note: since we're only interested in the _absence_ of a particular tuple
+        // (`killed` is always used in an antijoin), we could use a probabilistic data
+        // structure with no false-negatives like a Bloom filter. This relation is
+        // usually small, `clap` used to have around 1000, so the memory savings might not be incredible
+        // in the absolute, the relation size would be a lot smaller, for a one-time insertion slowdown (2x or so 
+        // compared to a HashSet) and relatively similary query time. 
+        let killed_rel: Relation<(Loan, Point)> = all_facts.killed.into(); 
 
         // .. some variables, ..
         let requires = iteration.variable::<(Origin, Loan, Point)>("requires");
@@ -287,7 +294,6 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
                 ((b, p), ())
             });
 
-            // TODO: filtering the `borrow_regions` input might make this join unnecessary ?
             // errors(B, P) :-
             //   invalidates(B, P),
             //   borrow_live_at(B, P).
