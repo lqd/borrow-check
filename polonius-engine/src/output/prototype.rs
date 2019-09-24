@@ -140,9 +140,9 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
         while iteration.changed() {
             subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
 
-            // a leaper that removes symmetries from proposed values to the
+            // a leaper that rejects symmetries from proposed values to the
             // leapjoin: origins which are `subsets` of themselves
-            let remove_symmetries = datafrog::ValueFilter::from(|&((r1, _p), _r2), &r3| r1 != r3);
+            let reject_symmetries = datafrog::ValueFilter::from(|&((r1, _p), _r2), &r3| r1 != r3);
 
             // subset(R1, R3, P) :-
             //   subset(R1, R2, P),
@@ -152,7 +152,7 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
                 &subset_r1p,
                 (
                     subset_base.extend_with(|&((_r1, p), r2)| (r2, p)),
-                    remove_symmetries,
+                    reject_symmetries,
                 ),
                 |&((r1, p), _r2), &r3| (r1, r3, p),
             );
@@ -304,6 +304,11 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
             // note: the 2 previous joins could be expressed as a single leapjoin when we relax
             // the WF-ness in datafrog, like this (which compiles but will fail at runtime, because
             // there is no `extend_` call):
+            //
+            // errors(B, P) :-
+            //   requires(R, B, P),
+            //   invalidates(B, P),
+            //   region_live_at(R, P).
             //
             // errors.from_leapjoin(
             //     &requires,
