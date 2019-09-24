@@ -217,6 +217,8 @@ fn compute_flow_sensitive_equality<Origin: Atom, Loan: Atom, Point: Atom, Variab
 
         // we need `region_live_at` in both variable and relation forms.
         // (respectively, for the regular join and the leapjoin).
+        // note: we're only interested in the presence of tuples in `region_live_at`,
+        // we never produce tuples only filter. We could use a different datastructure.
         let region_live_at_var = iteration.variable_indistinct::<((Origin, Point), ())>("region_live_at");
         let region_live_at_rel = Relation::from_iter(region_live_at.iter().cloned());
 
