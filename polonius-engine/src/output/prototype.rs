@@ -23,7 +23,7 @@ pub(super) fn compute<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom, Mov
                 _ => flag.parse::<bool>().unwrap_or(false)
             }            
         } else {
-            false
+            true
         }
     };
 
