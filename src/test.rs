@@ -53,6 +53,10 @@ fn test_facts(all_facts: &AllFacts, algorithms: &[Algorithm]) {
     // The hybrid algorithm gets the same errors as the naive version
     let opt = Output::compute(all_facts, Algorithm::Hybrid, true);
     assert_equal(&naive.errors, &opt.errors);
+
+    // The filtered algorithm gets the same errors as the naive version
+    let opt = Output::compute(all_facts, Algorithm::NaiveFiltered, true);
+    assert_equal(&naive.errors, &opt.errors);
 }
 
 fn test_fn(dir_name: &str, fn_name: &str, algorithm: Algorithm) -> Result<(), Box<dyn Error>> {
@@ -76,6 +80,11 @@ macro_rules! tests {
                 #[test]
                 fn datafrog_opt() -> Result<(), Box<dyn Error>> {
                     test_fn($dir, $fn, Algorithm::DatafrogOpt)
+                }
+
+                #[test]
+                fn naive_filtered() -> Result<(), Box<dyn Error>> {
+                    test_fn($dir, $fn, Algorithm::NaiveFiltered)
                 }
             }
         )*
@@ -325,10 +334,9 @@ fn smoke_test_success_2() {
 fn var_live_in_single_block() {
     let program = r"
         universal_regions {  }
-
+        var_uses_region { (V1, 'a) }
         block B0 {
-            var_used(V1);
-            goto B1;
+            var_used(V1); borrow_region_at('a, L0); invalidates(L0);
         }
     ";
 
@@ -349,6 +357,7 @@ fn var_live_in_single_block() {
 fn var_live_in_successor_propagates_to_predecessor() {
     let program = r"
         universal_regions {  }
+        var_uses_region { (V1, 'a) }
 
         block B0 {
             invalidates(L0); // generate a point
@@ -361,7 +370,7 @@ fn var_live_in_successor_propagates_to_predecessor() {
         }
 
         block B2 {
-            invalidates(L0);
+            invalidates(L0); borrow_region_at('a, L0);
             var_used(V1);
         }
     ";

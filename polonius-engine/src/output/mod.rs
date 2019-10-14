@@ -22,7 +22,7 @@ mod liveness;
 mod location_insensitive;
 mod naive;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Algorithm {
     /// Simple rules, but slower to execute
     Naive,
@@ -41,6 +41,8 @@ pub enum Algorithm {
     /// Combination of the fast `LocationInsensitive` pre-pass, followed by
     /// the more expensive `DatafrogOpt` variant.
     Hybrid,
+
+    NaiveFiltered,
 }
 
 impl Algorithm {
@@ -63,6 +65,7 @@ impl ::std::str::FromStr for Algorithm {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "naive" => Ok(Algorithm::Naive),
+            "naivefiltered" => Ok(Algorithm::NaiveFiltered),
             "datafrogopt" => Ok(Algorithm::DatafrogOpt),
             "locationinsensitive" => Ok(Algorithm::LocationInsensitive),
             "compare" => Ok(Algorithm::Compare),
@@ -125,24 +128,119 @@ impl<T: FactTypes> Output<T> {
 
         let cfg_edge = mem::replace(&mut all_facts.cfg_edge, Vec::new()).into();
 
+        // Initialization context
+        let mut path_belongs_to_var = mem::replace(&mut all_facts.path_belongs_to_var, Vec::new());
+        let mut initialized_at = mem::replace(&mut all_facts.initialized_at, Vec::new());
+        let mut moved_out_at = mem::replace(&mut all_facts.moved_out_at, Vec::new());
+        let mut path_accessed_at = mem::replace(&mut all_facts.path_accessed_at, Vec::new());
+
+        // Liveness context
+        let mut var_used = mem::replace(&mut all_facts.var_used, Vec::new());
+        let mut var_drop_used = mem::replace(&mut all_facts.var_drop_used, Vec::new());
+        let mut var_defined = mem::replace(&mut all_facts.var_defined, Vec::new());
+        let mut var_uses_region = mem::replace(&mut all_facts.var_uses_region, Vec::new());
+        let mut var_drops_region = mem::replace(&mut all_facts.var_drops_region, Vec::new());
+
+        if algorithm == Algorithm::NaiveFiltered {
+            // The set of "interesting" loans
+            let invalidates_set: FxHashSet<_> =
+                all_facts.invalidates.iter().map(|&(_p, l)| l).collect();
+
+            // The "interesting" borrow regions are the ones referring to loans for which an error could occur
+            let interesting_borrow_region: Relation<(T::Origin, T::Loan, T::Point)> = all_facts
+                .borrow_region
+                .iter()
+                .filter(|&(_o, l, _p)| invalidates_set.contains(l))
+                .collect();
+
+            // The interesting regions are any region into which an interesting loan could flow
+            let interesting_region = {
+                use datafrog::Iteration;
+
+                let mut iteration = Iteration::new();
+
+                let outlives_o1 =
+                    Relation::from_iter(all_facts.outlives.iter().map(|&(o1, o2, _p)| (o1, o2)));
+
+                let interesting_region = iteration.variable::<(T::Origin, ())>("interesting_region");
+
+                // interesting_region(O) :- interesting_borrow_region(O, _, _);
+                interesting_region.extend(interesting_borrow_region.iter().map(|&(o, _l, _p)| (o, ())));
+
+                while iteration.changed() {
+                    // interesting_region(O2) :-
+                    //     outlives(O1, O2, _),
+                    //     interesting_region(O1, _, _);
+                    interesting_region
+                        .from_join(&interesting_region, &outlives_o1, |_o1, (), &o2| (o2, ()));
+                }
+
+                interesting_region
+                    .complete()
+                    .iter()
+                    .map(|&(o1, _)| o1)
+                    .collect::<FxHashSet<_>>()
+            };
+
+            println!("live A - var_uses_region: {}", var_uses_region.len());
+            println!("live A - var_drops_region: {}", var_drops_region.len());        
+
+            var_uses_region.retain(|(_, origin)| interesting_region.contains(origin));
+            var_drops_region.retain(|(_, origin)| interesting_region.contains(origin));
+
+            let interesting_vars: FxHashSet<_> = var_uses_region.iter().chain(var_drops_region.iter()).map(|&(var, _)| var).collect();
+
+            println!("\ninit A - path_belongs_to_var: {}", path_belongs_to_var.len());
+            println!("init A - initialized_at: {}", initialized_at.len());
+            println!("init A - moved_out_at: {}", moved_out_at.len());
+            println!("init A - path_accessed_at: {}", path_accessed_at.len());
+
+            path_belongs_to_var.retain(|(_, var)| interesting_vars.contains(var));
+
+            let interesting_paths: FxHashSet<_> = path_belongs_to_var.iter().map(|&(path, _)| path).collect();
+
+            initialized_at.retain(|(path, _)| interesting_paths.contains(path));            
+            moved_out_at.retain(|(path, _)| interesting_paths.contains(path));
+            path_accessed_at.retain(|(path, _)| interesting_paths.contains(path));
+            
+            println!("\ninit B - path_belongs_to_var: {}", path_belongs_to_var.len());
+            println!("init B - initialized_at: {}", initialized_at.len());
+            println!("init B - moved_out_at: {}", moved_out_at.len());
+            println!("init B - path_accessed_at: {}", path_accessed_at.len());
+
+            println!("\nlive A - var_used: {}", var_used.len());
+            println!("live A - var_drop_used: {}", var_drop_used.len());
+            println!("live A - var_defined: {}", var_defined.len());
+
+            var_used.retain(|(var, _)| interesting_vars.contains(var));
+            var_drop_used.retain(|(var, _)| interesting_vars.contains(var));
+            var_defined.retain(|(var, _)| interesting_vars.contains(var));
+
+            println!("\nlive B - var_uses_region: {}", var_uses_region.len());
+            println!("live B - var_drops_region: {}", var_drops_region.len());
+            println!("live B - var_used: {}", var_used.len());
+            println!("live B - var_drop_used: {}", var_drop_used.len());
+            println!("live B - var_defined: {}", var_defined.len());
+        }
+
         // Initialization
         let var_maybe_initialized_on_exit = initialization::init_var_maybe_initialized_on_exit(
             mem::replace(&mut all_facts.child, Vec::new()),
-            mem::replace(&mut all_facts.path_belongs_to_var, Vec::new()),
-            mem::replace(&mut all_facts.initialized_at, Vec::new()),
-            mem::replace(&mut all_facts.moved_out_at, Vec::new()),
-            mem::replace(&mut all_facts.path_accessed_at, Vec::new()),
+            path_belongs_to_var,
+            initialized_at,
+            moved_out_at,
+            path_accessed_at,
             &cfg_edge,
             &mut result,
         );
 
         // Liveness
         let region_live_at = liveness::init_region_live_at(
-            mem::replace(&mut all_facts.var_used, Vec::new()),
-            mem::replace(&mut all_facts.var_drop_used, Vec::new()),
-            mem::replace(&mut all_facts.var_defined, Vec::new()),
-            mem::replace(&mut all_facts.var_uses_region, Vec::new()),
-            mem::replace(&mut all_facts.var_drops_region, Vec::new()),
+            var_used,
+            var_drop_used,
+            var_defined,
+            var_uses_region,
+            var_drops_region,
             var_maybe_initialized_on_exit,
             &cfg_edge,
             mem::replace(&mut all_facts.universal_region, Vec::new()),
@@ -186,7 +284,7 @@ impl<T: FactTypes> Output<T> {
             Algorithm::LocationInsensitive => location_insensitive::compute(&ctx, &mut result),
             Algorithm::Naive => naive::compute(&ctx, &mut result),
             Algorithm::DatafrogOpt => datafrog_opt::compute(&ctx, &mut result),
-            Algorithm::Hybrid => {
+            Algorithm::Hybrid | Algorithm::NaiveFiltered => {
                 // Execute the fast `LocationInsensitive` computation as a pre-pass:
                 // if it finds no possible errors, we don't need to do the more complex
                 // computations as they won't find errors either, and we can return early.
