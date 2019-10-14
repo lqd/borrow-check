@@ -55,7 +55,7 @@ fn test_facts(all_facts: &AllFacts, algorithms: &[Algorithm]) {
     assert_equal(&naive.errors, &opt.errors);
 
     // The filtered algorithm gets the same errors as the naive version
-    let opt = Output::compute(all_facts, Algorithm::NaiveFiltered, true);
+    let opt = Output::compute(all_facts, Algorithm::HybridFiltered, true);
     assert_equal(&naive.errors, &opt.errors);
 }
 
@@ -83,8 +83,8 @@ macro_rules! tests {
                 }
 
                 #[test]
-                fn naive_filtered() -> Result<(), Box<dyn Error>> {
-                    test_fn($dir, $fn, Algorithm::NaiveFiltered)
+                fn hybrid_filtered() -> Result<(), Box<dyn Error>> {
+                    test_fn($dir, $fn, Algorithm::HybridFiltered)
                 }
             }
         )*

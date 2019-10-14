@@ -42,7 +42,7 @@ pub enum Algorithm {
     /// the more expensive `DatafrogOpt` variant.
     Hybrid,
 
-    NaiveFiltered,
+    HybridFiltered,
 }
 
 impl Algorithm {
@@ -65,7 +65,7 @@ impl ::std::str::FromStr for Algorithm {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "naive" => Ok(Algorithm::Naive),
-            "naivefiltered" => Ok(Algorithm::NaiveFiltered),
+            "hybridfiltered" => Ok(Algorithm::HybridFiltered),
             "datafrogopt" => Ok(Algorithm::DatafrogOpt),
             "locationinsensitive" => Ok(Algorithm::LocationInsensitive),
             "compare" => Ok(Algorithm::Compare),
@@ -141,7 +141,7 @@ impl<T: FactTypes> Output<T> {
         let mut var_uses_region = mem::replace(&mut all_facts.var_uses_region, Vec::new());
         let mut var_drops_region = mem::replace(&mut all_facts.var_drops_region, Vec::new());
 
-        if algorithm == Algorithm::NaiveFiltered {
+        if algorithm == Algorithm::HybridFiltered {
             // The set of "interesting" loans
             let invalidates_set: FxHashSet<_> =
                 all_facts.invalidates.iter().map(|&(_p, l)| l).collect();
@@ -182,18 +182,18 @@ impl<T: FactTypes> Output<T> {
                     .collect::<FxHashSet<_>>()
             };
 
-            println!("live A - var_uses_region: {}", var_uses_region.len());
-            println!("live A - var_drops_region: {}", var_drops_region.len());        
+            // println!("live A - var_uses_region: {}", var_uses_region.len());
+            // println!("live A - var_drops_region: {}", var_drops_region.len());        
 
             var_uses_region.retain(|(_, origin)| interesting_region.contains(origin));
             var_drops_region.retain(|(_, origin)| interesting_region.contains(origin));
 
             let interesting_vars: FxHashSet<_> = var_uses_region.iter().chain(var_drops_region.iter()).map(|&(var, _)| var).collect();
 
-            println!("\ninit A - path_belongs_to_var: {}", path_belongs_to_var.len());
-            println!("init A - initialized_at: {}", initialized_at.len());
-            println!("init A - moved_out_at: {}", moved_out_at.len());
-            println!("init A - path_accessed_at: {}", path_accessed_at.len());
+            // println!("\ninit A - path_belongs_to_var: {}", path_belongs_to_var.len());
+            // println!("init A - initialized_at: {}", initialized_at.len());
+            // println!("init A - moved_out_at: {}", moved_out_at.len());
+            // println!("init A - path_accessed_at: {}", path_accessed_at.len());
 
             path_belongs_to_var.retain(|(_, var)| interesting_vars.contains(var));
 
@@ -203,24 +203,24 @@ impl<T: FactTypes> Output<T> {
             moved_out_at.retain(|(path, _)| interesting_paths.contains(path));
             path_accessed_at.retain(|(path, _)| interesting_paths.contains(path));
             
-            println!("\ninit B - path_belongs_to_var: {}", path_belongs_to_var.len());
-            println!("init B - initialized_at: {}", initialized_at.len());
-            println!("init B - moved_out_at: {}", moved_out_at.len());
-            println!("init B - path_accessed_at: {}", path_accessed_at.len());
+            // println!("\ninit B - path_belongs_to_var: {}", path_belongs_to_var.len());
+            // println!("init B - initialized_at: {}", initialized_at.len());
+            // println!("init B - moved_out_at: {}", moved_out_at.len());
+            // println!("init B - path_accessed_at: {}", path_accessed_at.len());
 
-            println!("\nlive A - var_used: {}", var_used.len());
-            println!("live A - var_drop_used: {}", var_drop_used.len());
-            println!("live A - var_defined: {}", var_defined.len());
+            // println!("\nlive A - var_used: {}", var_used.len());
+            // println!("live A - var_drop_used: {}", var_drop_used.len());
+            // println!("live A - var_defined: {}", var_defined.len());
 
             var_used.retain(|(var, _)| interesting_vars.contains(var));
             var_drop_used.retain(|(var, _)| interesting_vars.contains(var));
             var_defined.retain(|(var, _)| interesting_vars.contains(var));
 
-            println!("\nlive B - var_uses_region: {}", var_uses_region.len());
-            println!("live B - var_drops_region: {}", var_drops_region.len());
-            println!("live B - var_used: {}", var_used.len());
-            println!("live B - var_drop_used: {}", var_drop_used.len());
-            println!("live B - var_defined: {}", var_defined.len());
+            // println!("\nlive B - var_uses_region: {}", var_uses_region.len());
+            // println!("live B - var_drops_region: {}", var_drops_region.len());
+            // println!("live B - var_used: {}", var_used.len());
+            // println!("live B - var_drop_used: {}", var_drop_used.len());
+            // println!("live B - var_defined: {}", var_defined.len());
         }
 
         // Initialization
@@ -284,7 +284,7 @@ impl<T: FactTypes> Output<T> {
             Algorithm::LocationInsensitive => location_insensitive::compute(&ctx, &mut result),
             Algorithm::Naive => naive::compute(&ctx, &mut result),
             Algorithm::DatafrogOpt => datafrog_opt::compute(&ctx, &mut result),
-            Algorithm::Hybrid | Algorithm::NaiveFiltered => {
+            Algorithm::Hybrid | Algorithm::HybridFiltered => {
                 // Execute the fast `LocationInsensitive` computation as a pre-pass:
                 // if it finds no possible errors, we don't need to do the more complex
                 // computations as they won't find errors either, and we can return early.
