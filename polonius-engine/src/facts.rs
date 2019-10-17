@@ -62,6 +62,12 @@ pub struct AllFacts<T: FactTypes> {
     /// `path_accessed_at(path, point)` when the `path` was accessed at point
     /// `point`. The same logic as for `initialized_at` and `moved_out_at` applies.
     pub path_accessed_at: Vec<(T::Path, T::Point)>,
+
+    /// `known_subset(O1, O2)` when the "placeholder origin" O1 is a known subset of O2
+    pub known_subset: Vec<(T::Origin, T::Origin)>,
+
+    /// The free regions, with their associated placeholder loan.
+    pub placeholder_origin: Vec<(T::Origin, T::Loan)>,
 }
 
 impl<T: FactTypes> Default for AllFacts<T> {
@@ -83,6 +89,8 @@ impl<T: FactTypes> Default for AllFacts<T> {
             initialized_at: Vec::default(),
             moved_out_at: Vec::default(),
             path_accessed_at: Vec::default(),
+            known_subset: Vec::default(),
+            placeholder_origin: Vec::default(),
         }
     }
 }

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use polonius_parser::{
-    ir::{Effect, Fact},
+    ir::{Effect, Fact, KnownSubset, PlaceholderOrigin},
     parse_input,
 };
 
@@ -29,6 +29,8 @@ struct Facts {
     initialized_at: BTreeSet<(Path, Point)>,
     moved_out_at: BTreeSet<(Path, Point)>,
     path_accessed_at: BTreeSet<(Path, Point)>,
+    known_subset: BTreeSet<(Origin, Origin)>,
+    placeholder_origin: BTreeSet<(Origin, Loan)>,
 }
 
 impl From<Facts> for AllFacts {
@@ -50,6 +52,8 @@ impl From<Facts> for AllFacts {
             initialized_at: facts.initialized_at.into_iter().collect(),
             moved_out_at: facts.moved_out_at.into_iter().collect(),
             path_accessed_at: facts.path_accessed_at.into_iter().collect(),
+            known_subset: facts.known_subset.into_iter().collect(),
+            placeholder_origin: facts.placeholder_origin.into_iter().collect(),
         }
     }
 }
@@ -69,6 +73,26 @@ pub(crate) fn parse_from_program(
             .universal_regions
             .iter()
             .map(|origin| tables.origins.intern(origin)),
+    );
+
+    // facts: placeholder_origin(Origin, Loan)
+    facts
+        .placeholder_origin
+        .extend(input.placeholder_origins.iter().map(
+            |PlaceholderOrigin {
+                 ref origin,
+                 ref loan,
+             }| { (tables.origins.intern(origin), tables.loans.intern(loan)) },
+        ));
+
+    // facts: known_subset(Origin, Origin)
+    facts.known_subset.extend(
+        input
+            .known_subsets
+            .iter()
+            .map(|KnownSubset { ref a, ref b }| {
+                (tables.origins.intern(a), tables.origins.intern(b))
+            }),
     );
 
     facts

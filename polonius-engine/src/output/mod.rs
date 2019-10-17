@@ -80,6 +80,7 @@ impl ::std::str::FromStr for Algorithm {
 #[derive(Clone, Debug)]
 pub struct Output<T: FactTypes> {
     pub errors: FxHashMap<T::Point, Vec<T::Loan>>,
+    pub subset_errors: FxHashMap<T::Point, BTreeSet<(T::Origin, T::Origin)>>,
 
     pub dump_enabled: bool,
 
@@ -145,6 +146,8 @@ impl<T: FactTypes> Output<T> {
             // The set of "interesting" loans
             let invalidates_set: FxHashSet<_> =
                 all_facts.invalidates.iter().map(|&(_p, l)| l).collect();
+            
+            // invalidates_set.extend(all_facts.placeholder_origin.iter().map(|&(_, loan)| loan));
 
             // The "interesting" borrow regions are the ones referring to loans for which an error could occur
             let interesting_borrow_region: Relation<(T::Origin, T::Loan, T::Point)> = all_facts
@@ -181,6 +184,8 @@ impl<T: FactTypes> Output<T> {
                     .map(|&(o1, _)| o1)
                     .collect::<FxHashSet<_>>()
             };
+
+            // interesting_region.extend(all_facts.universal_region.iter());
 
             // println!("live A - var_uses_region: {}", var_uses_region.len());
             // println!("live A - var_drops_region: {}", var_drops_region.len());        
@@ -368,6 +373,7 @@ impl<T: FactTypes> Output<T> {
             path_maybe_initialized_at: FxHashMap::default(),
             var_maybe_initialized_on_exit: FxHashMap::default(),
             dump_enabled,
+            subset_errors: FxHashMap::default(),
         }
     }
 
