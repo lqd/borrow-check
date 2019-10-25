@@ -30,9 +30,17 @@ pub(super) fn compute<T: FactTypes>(
         let cfg_edge_rel = &ctx.cfg_edge;
         let killed_rel = &ctx.killed;
 
-        let placeholder_origin: Relation<(T::Origin, T::Loan)> = all_facts.placeholder_origin.clone().into();
+        let placeholder_origin: Relation<(T::Origin, ())> = Relation::from_iter(
+            all_facts
+                .placeholder_origin
+                .iter()
+                .map(|&(origin, _loan)| (origin, ())),
+        );
         let placeholder_origin_l: Relation<_> = Relation::from_iter(
-            placeholder_origin.iter().map(|&(origin, loan)| (loan, origin))
+            all_facts
+                .placeholder_origin
+                .iter()
+                .map(|&(origin, loan)| (loan, origin)),
         );
         let known_subset: Relation<(T::Origin, T::Origin)> = all_facts.known_subset.clone().into();
 
@@ -42,9 +50,6 @@ pub(super) fn compute<T: FactTypes>(
         // .. some variables, ..
         let subset = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset");
         let requires = iteration.variable::<(T::Origin, T::Loan, T::Point)>("requires");
-
-        // Note: `requires_o` is an indexed version of the `requires` relation
-        let requires_o = iteration.variable_indistinct::<(T::Origin, (T::Loan, T::Point))>("requires_o");
 
         let borrow_live_at = iteration.variable::<((T::Loan, T::Point), ())>("borrow_live_at");
 
@@ -65,10 +70,9 @@ pub(super) fn compute<T: FactTypes>(
 
         // output
         let errors = iteration.variable("errors");
-        
         let subset_errors = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_errors");
-        let subset_errors_step_9_1 = iteration.variable("subset_errors_step_9_1");
-        let subset_errors_step_9_2 = iteration.variable("subset_errors_step_9_2");
+
+        let subset_errors_step_1 = iteration.variable("subset_errors_step_9_1");
 
         // load initial facts.
         subset.extend(all_facts.outlives.iter());
@@ -85,9 +89,13 @@ pub(super) fn compute<T: FactTypes>(
                 .map(|&(origin, point)| ((origin, point), ())),
         );
 
-        // seed placeholder loans into requires at the start of the cfg
-        let cfg_start = cfg_edge_rel.iter().next().unwrap().0;
-        requires.extend(placeholder_origin.iter().map(|&(origin, loan)| (origin, loan, cfg_start)));
+        // seed placeholder loans into `requires` at the root of the cfg
+        let cfg_root = cfg_edge_rel.iter().next().unwrap().0;
+        requires.extend(
+            placeholder_origin_l
+                .iter()
+                .map(|&(loan, origin)| (origin, loan, cfg_root)),
+        );
 
         // .. and then start iterating rules!
         while iteration.changed() {
@@ -114,7 +122,6 @@ pub(super) fn compute<T: FactTypes>(
             });
 
             requires_op.from_map(&requires, |&(origin, loan, point)| ((origin, point), loan));
-            requires_o.from_map(&requires, |&(origin, loan, point)| (origin, (loan, point)));
 
             // subset(origin1, origin2, point) :- outlives(origin1, origin2, point).
             // Already loaded; outlives is static.
@@ -189,39 +196,39 @@ pub(super) fn compute<T: FactTypes>(
             // subset_error(origin1, origin2, point) :-
             //   requires(origin2, loan1, point),
             //   placeholder_origin(origin2, _),
-            //   placeholder_origin(origin1, loan1), // placeholder region O1 has associated loan `loan1`
+            //   placeholder_origin(origin1, loan1),
             //   !known_subset(origin1, origin2).
-            // subset_errors.from_leapjoin(
-            //     &requires,
-            //     (
-            //         placeholder_origin.extend_with(|&(origin2, loan1, point)| origin2),
-            //         placeholder_origin_lo.extend_with(|&(_origin2, loan1, _point)| loan1),
-            //         // datafrog::ValueFilter::from(|&(origin2, loan1, point), &origin1| true),
-            //     ),
-            //     |&(origin2, loan1, point), &origin1| (origin1, origin2, point)
-            // );
-
-            // R09: subset_error(O1, O2, P) :- 
-            //        requires(O2, L, P), 
-            //        placeholder_origin(O2, _), 
-            //        placeholder_origin(O1, L), 
-            //        !known_subset(O1, O2).
-            // TODO: integrate a filter on O1 != O2 in the leapjoin
-            // TODO: eliminate requires_o: rename step9_1 to placeholder_origin_requires (avec une leapjoin par ex, mais
-            // vérifier si l'economie de l'index vaut bien le coup de la leapjoin à 2 predicats)
-            // - réussir à faire une leapjoin serait une autre solution...
-            subset_errors_step_9_1.from_join(&requires_o, &placeholder_origin, |&o2, &(l, p), _| (l, (o2, p)));
-            subset_errors_step_9_2.from_join(&subset_errors_step_9_1, &placeholder_origin_l, |&_l, &(o2, p), &o1| ((o1, o2), p));
-            subset_errors.from_antijoin(&subset_errors_step_9_2, &known_subset, |&(o1, o2), &p| (o1, o2, p));
-
-            subset_errors
-                .recent
-                .borrow_mut()
-                .elements
-                .retain(|&(origin1, origin2, _)| origin1 != origin2);
+            subset_errors_step_1.from_leapjoin(
+                &requires,
+                (
+                    placeholder_origin.filter_with(|&(origin2, _loan1, _point)| (origin2, ())),
+                    placeholder_origin_l.extend_with(|&(_origin2, loan1, _point)| loan1),
+                    // remove symmetries
+                    datafrog::ValueFilter::from(|&(origin2, _loan1, _point), &origin1| {
+                        origin2 != origin1
+                    }),
+                ),
+                |&(origin2, _loan1, point), &origin1| ((origin1, origin2), point),
+            );
+            subset_errors.from_antijoin(&subset_errors_step_1, &known_subset, |&(o1, o2), &p| {
+                (o1, o2, p)
+            });
         }
 
+        let errors = errors.complete();
+        let subset_errors = subset_errors.complete();
+
+        // Handle verbose output data
         if result.dump_enabled {
+            assert!(
+                subset_errors
+                    .iter()
+                    .filter(|&(origin1, origin2, _)| origin1 == origin2)
+                    .count()
+                    == 0,
+                "unwanted subset_errors symmetries"
+            );
+
             let subset = subset.complete();
             assert!(
                 subset
@@ -262,12 +269,16 @@ pub(super) fn compute<T: FactTypes>(
             }
         }
 
-        let subset_errors = subset_errors.complete();
+        // TODO: move this to the output module ?
         for &(origin1, origin2, location) in subset_errors.iter() {
-            result.subset_errors.entry(location).or_default().insert((origin1, origin2));
+            result
+                .subset_errors
+                .entry(location)
+                .or_default()
+                .insert((origin1, origin2));
         }
 
-        errors.complete()
+        errors
     };
 
     info!(
