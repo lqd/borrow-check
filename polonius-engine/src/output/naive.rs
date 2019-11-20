@@ -63,8 +63,23 @@ pub(super) fn compute<T: FactTypes>(
         let subset_errors = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_errors");
 
         // load initial facts.
-        subset.extend(ctx.outlives.iter());
-        requires.extend(ctx.borrow_region.iter());
+
+        // Limit the `subset` relation to interesting `outlives` constraints:
+        // the ones between interesting origins.
+        let interesting_outlives = ctx
+            .outlives
+            .iter()
+            .filter(|&(origin1, _origin2, _point)| ctx.interesting_origin.contains(origin1));
+
+        subset.extend(interesting_outlives);
+        // subset.extend(ctx.outlives.iter());
+
+        // Limit the `requires` relation to origins where errors could occur: the interesting
+        // borrow regions.
+        // note: we could take ownership of the ctx to insert the rel
+        requires.extend(ctx.interesting_borrow_region.iter());
+        // requires.extend(ctx.borrow_region.iter());
+
         invalidates.extend(
             ctx.invalidates
                 .iter()

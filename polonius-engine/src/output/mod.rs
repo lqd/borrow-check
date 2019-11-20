@@ -136,6 +136,10 @@ struct Context<'ctx, T: FactTypes> {
 
     // Partial results possibly used by other variants as input
     potential_errors: Option<FxHashSet<T::Loan>>,
+
+    // interesting-ness filtering
+    interesting_origin: FxHashSet<T::Origin>,
+    interesting_borrow_region: Relation<(T::Origin, T::Loan, T::Point)>,
 }
 
 impl<T: FactTypes> Output<T> {
@@ -153,6 +157,75 @@ impl<T: FactTypes> Output<T> {
         // TODO: remove all the cloning thereafter, but that needs to be done in concert with rustc
 
         let cfg_edge = all_facts.cfg_edge.clone().into();
+
+        // The set of "interesting" loans
+        let interesting_loan: FxHashSet<_> = all_facts
+            .invalidates
+            .iter()
+            .map(|&(_point, loan)| loan)
+            .collect();
+
+        // The "interesting" borrow regions are the ones referring to loans for which an error could occur
+        let interesting_borrow_region: Relation<_> = all_facts
+            .borrow_region
+            .iter()
+            .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
+            .collect();
+
+        // The interesting origins are:
+        // - for illegal access errors: any origin into which an interesting loan could flow.
+        // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
+        //   be tightened further to some of the placeholders which are _not_ in the
+        //   `known_subset` relation: they are the only ones into which an unexpected placeholder
+        //   loan can flow)
+        let interesting_origin = {
+            use datafrog::Iteration;
+
+            let mut iteration = Iteration::new();
+
+            let outlives_o1 = Relation::from_iter(
+                all_facts
+                    .outlives
+                    .iter()
+                    .map(|&(origin1, origin2, _point)| (origin1, origin2)),
+            );
+
+            let interesting_origin = iteration.variable::<(T::Origin, ())>("interesting_origin");
+
+            // interesting_origin(Origin) :-
+            //   interesting_borrow_region(Origin, _, _);
+            interesting_origin.extend(
+                interesting_borrow_region
+                    .iter()
+                    .map(|&(origin, _loan, _point)| (origin, ())),
+            );
+
+            // interesting_origin(Origin) :-
+            //   placeholder(Origin, _);
+            interesting_origin.extend(
+                all_facts
+                    .placeholder
+                    .iter()
+                    .map(|&(origin, _loan)| (origin, ())),
+            );
+
+            while iteration.changed() {
+                // interesting_origin(Origin2) :-
+                //   outlives(Origin1, Origin2, _),
+                //   interesting_origin(Origin1, _, _);
+                interesting_origin.from_join(
+                    &interesting_origin,
+                    &outlives_o1,
+                    |_origin1, (), &origin2| (origin2, ()),
+                );
+            }
+
+            interesting_origin
+                .complete()
+                .iter()
+                .map(|&(origin1, _)| origin1)
+                .collect::<FxHashSet<_>>()
+        };
 
         // 1) Initialization
         let initialization_ctx = InitializationContext {
@@ -260,6 +333,9 @@ impl<T: FactTypes> Output<T> {
             placeholder_origin,
             placeholder_loan,
             potential_errors: None,
+
+            interesting_origin,
+            interesting_borrow_region,
         };
 
         let errors = match algorithm {
