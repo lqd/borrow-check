@@ -327,9 +327,11 @@ fn var_live_in_single_block() {
     let program = r"
         placeholders { }
 
+        var_uses_region { (V1, 'a) }
         block B0 {
             var_used(V1);
-            goto B1;
+            borrow_region_at('a, L0);
+            invalidates(L0);
         }
     ";
 
@@ -350,6 +352,7 @@ fn var_live_in_single_block() {
 fn var_live_in_successor_propagates_to_predecessor() {
     let program = r"
         placeholders { }
+        var_uses_region { (V1, 'a) }
 
         block B0 {
             invalidates(L0); // generate a point
@@ -363,6 +366,7 @@ fn var_live_in_successor_propagates_to_predecessor() {
 
         block B2 {
             invalidates(L0);
+            borrow_region_at('a, L0);
             var_used(V1);
         }
     ";

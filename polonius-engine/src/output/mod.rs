@@ -243,12 +243,34 @@ impl<T: FactTypes> Output<T> {
         );
 
         // 2) Liveness
+
+        let mut var_used = all_facts.var_used.clone();
+        let mut var_defined = all_facts.var_defined.clone();
+        let mut var_drop_used = all_facts.var_drop_used.clone();
+        let mut var_uses_region = all_facts.var_uses_region.clone();
+        let mut var_drops_region = all_facts.var_drops_region.clone();
+
+        var_uses_region.retain(|(_, origin)| interesting_origin.contains(origin));
+        var_drops_region.retain(|(_, origin)| interesting_origin.contains(origin));
+
+        // The interesting variables are the ones whose uses or drops can deref
+        // an interesting origin.
+        let interesting_vars: FxHashSet<_> = var_uses_region
+            .iter()
+            .chain(var_drops_region.iter())
+            .map(|&(var, _)| var)
+            .collect();
+
+        var_used.retain(|(var, _)| interesting_vars.contains(var));
+        var_drop_used.retain(|(var, _)| interesting_vars.contains(var));
+        var_defined.retain(|(var, _)| interesting_vars.contains(var));
+
         let liveness_ctx = LivenessContext {
-            var_used: all_facts.var_used.clone(),
-            var_defined: all_facts.var_defined.clone(),
-            var_drop_used: all_facts.var_drop_used.clone(),
-            var_uses_region: all_facts.var_uses_region.clone(),
-            var_drops_region: all_facts.var_drops_region.clone(),
+            var_used,
+            var_defined,
+            var_drop_used,
+            var_uses_region,
+            var_drops_region,
         };
 
         let mut region_live_at = liveness::compute_live_regions(
