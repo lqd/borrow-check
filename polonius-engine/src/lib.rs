@@ -6,7 +6,7 @@ extern crate log;
 extern crate rustc_hash;
 
 mod facts;
-mod output;
+pub mod output;
 
 // Reexports of facts
 pub use facts::AllFacts;

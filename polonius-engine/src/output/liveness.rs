@@ -18,7 +18,7 @@ use crate::output::{LivenessContext, Output};
 
 use datafrog::{Iteration, Relation, RelationLeaper};
 
-pub(super) fn compute_live_origins<T: FactTypes>(
+pub fn compute_live_origins<T: FactTypes>(
     ctx: LivenessContext<T>,
     cfg_edge: &Relation<(T::Point, T::Point)>,
     var_maybe_partly_initialized_on_exit: Relation<(T::Variable, T::Point)>,
@@ -154,7 +154,7 @@ pub(super) fn compute_live_origins<T: FactTypes>(
     origin_live_on_entry.elements
 }
 
-pub(super) fn make_universal_regions_live<T: FactTypes>(
+pub fn make_universal_regions_live<T: FactTypes>(
     origin_live_on_entry: &mut Vec<(T::Origin, T::Point)>,
     cfg_node: &BTreeSet<T::Point>,
     universal_regions: &[T::Origin],

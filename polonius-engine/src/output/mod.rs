@@ -16,10 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::facts::{AllFacts, Atom, FactTypes};
 
 mod datafrog_opt;
-mod initialization;
-mod liveness;
+pub mod initialization;
+pub mod liveness;
 mod location_insensitive;
 mod naive;
+
+pub mod blocky;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Algorithm {
@@ -40,6 +42,8 @@ pub enum Algorithm {
     /// Combination of the fast `LocationInsensitive` pre-pass, followed by
     /// the more expensive `DatafrogOpt` variant.
     Hybrid,
+
+    Blocky,
 }
 
 impl Algorithm {
@@ -62,6 +66,7 @@ impl ::std::str::FromStr for Algorithm {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "naive" => Ok(Algorithm::Naive),
+            "blocky" => Ok(Algorithm::Blocky),
             "datafrogopt" => Ok(Algorithm::DatafrogOpt),
             "locationinsensitive" => Ok(Algorithm::LocationInsensitive),
             "compare" => Ok(Algorithm::Compare),
@@ -97,46 +102,46 @@ pub struct Output<T: FactTypes> {
 }
 
 /// Subset of `AllFacts` dedicated to initialization
-struct InitializationContext<T: FactTypes> {
-    child_path: Vec<(T::Path, T::Path)>,
-    path_is_var: Vec<(T::Path, T::Variable)>,
-    path_assigned_at_base: Vec<(T::Path, T::Point)>,
-    path_moved_at_base: Vec<(T::Path, T::Point)>,
-    path_accessed_at_base: Vec<(T::Path, T::Point)>,
+pub struct InitializationContext<T: FactTypes> {
+    pub child_path: Vec<(T::Path, T::Path)>,
+    pub path_is_var: Vec<(T::Path, T::Variable)>,
+    pub path_assigned_at_base: Vec<(T::Path, T::Point)>,
+    pub path_moved_at_base: Vec<(T::Path, T::Point)>,
+    pub path_accessed_at_base: Vec<(T::Path, T::Point)>,
 }
 
 /// Subset of `AllFacts` dedicated to liveness
-struct LivenessContext<T: FactTypes> {
-    var_used_at: Vec<(T::Variable, T::Point)>,
-    var_defined_at: Vec<(T::Variable, T::Point)>,
-    var_dropped_at: Vec<(T::Variable, T::Point)>,
-    use_of_var_derefs_origin: Vec<(T::Variable, T::Origin)>,
-    drop_of_var_derefs_origin: Vec<(T::Variable, T::Origin)>,
+pub struct LivenessContext<T: FactTypes> {
+    pub var_used_at: Vec<(T::Variable, T::Point)>,
+    pub var_defined_at: Vec<(T::Variable, T::Point)>,
+    pub var_dropped_at: Vec<(T::Variable, T::Point)>,
+    pub use_of_var_derefs_origin: Vec<(T::Variable, T::Origin)>,
+    pub drop_of_var_derefs_origin: Vec<(T::Variable, T::Origin)>,
 }
 
 /// Subset of `AllFacts` dedicated to borrow checking, and data ready to use by the variants
-struct Context<'ctx, T: FactTypes> {
+pub struct Context<'ctx, T: FactTypes> {
     // `Relation`s used as static inputs, by all variants
-    origin_live_on_entry: Relation<(T::Origin, T::Point)>,
-    invalidates: Relation<(T::Loan, T::Point)>,
+    pub origin_live_on_entry: Relation<(T::Origin, T::Point)>,
+    pub invalidates: Relation<(T::Loan, T::Point)>,
 
     // static inputs used via `Variable`s, by all variants
-    outlives: &'ctx Vec<(T::Origin, T::Origin, T::Point)>,
-    borrow_region: &'ctx Vec<(T::Origin, T::Loan, T::Point)>,
+    pub outlives: &'ctx Vec<(T::Origin, T::Origin, T::Point)>,
+    pub borrow_region: &'ctx Vec<(T::Origin, T::Loan, T::Point)>,
 
     // static inputs used by variants other than `LocationInsensitive`
-    cfg_node: &'ctx BTreeSet<T::Point>,
-    killed: Relation<(T::Loan, T::Point)>,
-    known_contains: Relation<(T::Origin, T::Loan)>,
-    placeholder_origin: Relation<(T::Origin, ())>,
-    placeholder_loan: Relation<(T::Loan, T::Origin)>,
+    pub cfg_node: &'ctx BTreeSet<T::Point>,
+    pub killed: Relation<(T::Loan, T::Point)>,
+    pub known_contains: Relation<(T::Origin, T::Loan)>,
+    pub placeholder_origin: Relation<(T::Origin, ())>,
+    pub placeholder_loan: Relation<(T::Loan, T::Origin)>,
 
     // while this static input is unused by `LocationInsensitive`, it's depended on by initialization
     // and liveness, so already computed by the time we get to borrowcking.
-    cfg_edge: Relation<(T::Point, T::Point)>,
+    pub cfg_edge: Relation<(T::Point, T::Point)>,
 
     // Partial results possibly used by other variants as input
-    potential_errors: Option<FxHashSet<T::Loan>>,
+    pub potential_errors: Option<FxHashSet<T::Loan>>,
 }
 
 impl<T: FactTypes> Output<T> {
@@ -266,6 +271,9 @@ impl<T: FactTypes> Output<T> {
         };
 
         let errors = match algorithm {
+            Algorithm::Blocky => {
+                todo!()
+            }
             Algorithm::LocationInsensitive => location_insensitive::compute(&ctx, &mut result),
             Algorithm::Naive => {
                 let (errors, subset_errors) = naive::compute(&ctx, &mut result);
@@ -368,7 +376,7 @@ impl<T: FactTypes> Output<T> {
 
     /// Computes the transitive closure of the `known_subset` relation, so that we have
     /// the full list of placeholder loans contained by the placeholder origins.
-    fn compute_known_contains(
+    pub fn compute_known_contains(
         known_subset: &Relation<(T::Origin, T::Origin)>,
         placeholder: &[(T::Origin, T::Loan)],
     ) -> Relation<(T::Origin, T::Loan)> {

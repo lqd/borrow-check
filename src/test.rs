@@ -11,6 +11,278 @@ use rustc_hash::FxHashMap;
 use std::error::Error;
 use std::path::Path;
 
+#[test]
+fn blocky() -> Result<(), Box<dyn Error>> {
+    use rustc_hash::FxHashSet;
+    use std::collections::VecDeque;
+
+    let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("inputs")
+        .join("vec-push-ref")
+        .join("nll-facts")
+        .join("foo1");
+
+    let mut tables = intern::InternerTables::new();
+    let facts = tab_delim::load_tab_delimited_facts(&mut tables, &facts_dir)?;
+
+    let block_from_point = |point| {
+        let point = tables.points.untern(point);
+
+        // pattern: Mid(bb0[12])
+        let point_type_separator = point.find('(').unwrap();
+        let point_block_separator = point.find('[').unwrap();
+
+        let block = &point[point_type_separator + 1..point_block_separator];
+        let block_idx = &block[2..];
+        (point, block_idx.parse::<usize>().unwrap())
+    };
+
+    let mut block_borrow_region: FxHashMap<usize, FxHashSet<(Origin, Loan, Point)>> = Default::default();
+    for fact in facts.borrow_region.iter() {
+        let (_point, block_idx) = block_from_point(fact.2);
+        // println!("borrow_region {:?} is from {} block {}", fact, point, block_idx);
+
+        block_borrow_region.entry(block_idx).or_default().insert(*fact);
+    }
+
+    // facts.universal_region has no points
+
+    let mut block_cfg_edge: FxHashMap<usize, FxHashSet<(Point, Point)>> = Default::default();
+    for fact in facts.cfg_edge.iter() {
+        let (_point_from, block_from_idx) = block_from_point(fact.0);
+        let (_point_to, block_to_idx) = block_from_point(fact.1);
+        // println!("cfg_edge {:?} is from {} block {}, to {} block {}", fact, point_from, block_from_idx, point_to, block_to_idx);
+
+        // we probably don't need to the predecessors -> block start point edges
+        block_cfg_edge.entry(block_from_idx).or_default().insert(*fact);
+        block_cfg_edge.entry(block_to_idx).or_default().insert(*fact);
+    }
+
+    let mut block_killed: FxHashMap<usize, FxHashSet<(Loan, Point)>> = Default::default();
+    for fact in facts.killed.iter() {
+        let (_point, block_idx) = block_from_point(fact.1);
+        // println!("killed {:?} is from {} block {}", fact, point, block_idx);
+
+        block_killed.entry(block_idx).or_default().insert(*fact);
+    }
+
+    let mut block_outlives: FxHashMap<usize, FxHashSet<(Origin, Origin, Point)>> = Default::default();
+    for fact in facts.outlives.iter() {
+        let (_point, block_idx) = block_from_point(fact.2);
+        // println!("outlives {:?} is from {} block {}", fact, point, block_idx);
+
+        block_outlives.entry(block_idx).or_default().insert(*fact);
+    }
+
+    let mut block_invalidates: FxHashMap<usize, FxHashSet<(Point, Loan)>> = Default::default();
+    for fact in facts.invalidates.iter() {
+        let (_point, block_idx) = block_from_point(fact.0);
+        // println!("invalidates {:?} is from {} block {}", fact, point, block_idx);
+
+        block_invalidates.entry(block_idx).or_default().insert(*fact);
+    }
+
+    // {
+    //     let blocky::BlockyResult { errors, .. } = run_blocky(&facts);
+    //     println!("errors: {:?}", errors.elements);
+    // }
+
+    let block_count = 18; // block count manually checked in cfg_edge
+
+    let mut block_facts: FxHashMap<usize, AllFacts> = Default::default();
+    for block_idx in 0..=block_count { 
+        let mut facts = facts.clone();
+        
+        facts.borrow_region = if let Some(rel) = block_borrow_region.get(&block_idx) { rel.iter().copied().collect() } else { vec![] };
+        facts.cfg_edge = if let Some(rel) = block_cfg_edge.get(&block_idx) { rel.iter().copied().collect() } else { vec![] };
+        facts.killed = if let Some(rel) = block_killed.get(&block_idx) { rel.iter().copied().collect() } else { vec![] };
+        facts.outlives = if let Some(rel) = block_outlives.get(&block_idx) { rel.iter().copied().collect() } else { vec![] };
+        facts.invalidates = if let Some(rel) = block_invalidates.get(&block_idx) { rel.iter().copied().collect() } else { vec![] };
+        
+        block_facts.insert(block_idx, facts);
+    }
+
+    // TODO: navigate the CFG following block edges, merging requires/subsets (and errors ?)
+    let mut blocks: VecDeque<_> = (0..1).collect();
+
+    while let Some(block_idx) = blocks.pop_front() {
+        println!("block to visit: {}", block_idx);
+
+        let facts = &block_facts[&block_idx];
+        let result = run_blocky(facts);
+        println!("errors: {:?}", result.errors.elements);
+
+        if result.errors.len() > 0 {
+            panic!("found an error, {:?}", result.errors.elements);
+        }
+
+        let outgoing_edges: FxHashSet<usize> = facts.cfg_edge.iter().flat_map(|&(from, to)| {
+            let (_, block_from_idx) = block_from_point(from);
+            let (_, block_to_idx) = block_from_point(to);
+            if block_idx == block_from_idx && block_idx != block_to_idx {
+                Some(block_to_idx)
+            } else {
+                None
+            }
+        }).collect();
+
+        println!("block {} to: {:?}", block_idx, outgoing_edges);
+
+        for successor_block_idx in outgoing_edges {
+            println!("merging current block {}, with successor block {}", block_idx, successor_block_idx);
+            let successor_facts = block_facts.get_mut(&successor_block_idx).unwrap();
+            successor_facts.borrow_region.extend(result.requires.iter());
+            successor_facts.outlives.extend(result.subset.iter());
+            blocks.push_back(successor_block_idx);
+        }
+
+        // // bb0 -> bb3 + bb4
+        // if block_idx == 0 {
+        //     let bb3 = block_facts.get_mut(&3).unwrap();
+        //     bb3.borrow_region.extend(result.requires.iter());
+        //     bb3.outlives.extend(result.subset.iter());
+
+        //     let bb4 = block_facts.get_mut(&4).unwrap();
+        //     bb4.borrow_region.extend(result.requires.iter());
+        //     bb4.outlives.extend(result.subset.iter());
+
+        //     blocks.push_front(4);
+        //     blocks.push_front(3);
+        // }
+    }
+
+    println!();
+
+    todo!("not finished yet");    
+}
+
+use polonius_engine::output::blocky;
+use crate::facts::LocalFacts;
+
+fn run_blocky(all_facts: &AllFacts) -> 
+    blocky::BlockyResult<LocalFacts>
+{
+    use datafrog::Relation;
+    use polonius_engine::output::initialization;
+    use polonius_engine::output::liveness;
+    use polonius_engine::output::{InitializationContext, LivenessContext, Context};
+
+    let mut result = Output {
+        errors: FxHashMap::default(),
+        subset_errors: FxHashMap::default(),
+        dump_enabled: true,
+        borrow_live_at: FxHashMap::default(),
+        restricts: FxHashMap::default(),
+        restricts_anywhere: FxHashMap::default(),
+        origin_live_on_entry: FxHashMap::default(),
+        invalidates: FxHashMap::default(),
+        move_errors: FxHashMap::default(),
+        subset: FxHashMap::default(),
+        subset_anywhere: FxHashMap::default(),
+        var_live_on_entry: FxHashMap::default(),
+        var_drop_live_on_entry: FxHashMap::default(),
+        path_maybe_initialized_on_exit: FxHashMap::default(),
+        var_maybe_partly_initialized_on_exit: FxHashMap::default(),
+        known_contains: FxHashMap::default(),
+    };
+
+    let cfg_edge = all_facts.cfg_edge.clone().into();
+
+    // 1) Initialization
+    let initialization_ctx = InitializationContext {
+        child_path: all_facts.child_path.clone(),
+        path_is_var: all_facts.path_is_var.clone(),
+        path_assigned_at_base: all_facts.path_assigned_at_base.clone(),
+        path_moved_at_base: all_facts.path_moved_at_base.clone(),
+        path_accessed_at_base: all_facts.path_accessed_at_base.clone(),
+    };
+
+    let initialization::InitializationResult(
+        var_maybe_partly_initialized_on_exit,
+        move_errors,
+    ) = initialization::compute(initialization_ctx, &cfg_edge, &mut result);
+
+    for &(path, location) in move_errors.iter() {
+        result.move_errors.entry(location).or_default().push(path);
+    }
+
+    // 2) Liveness
+    let liveness_ctx = LivenessContext {
+        var_used_at: all_facts.var_used_at.clone(),
+        var_defined_at: all_facts.var_defined_at.clone(),
+        var_dropped_at: all_facts.var_dropped_at.clone(),
+        use_of_var_derefs_origin: all_facts.use_of_var_derefs_origin.clone(),
+        drop_of_var_derefs_origin: all_facts.drop_of_var_derefs_origin.clone(),
+    };
+
+    let mut origin_live_on_entry = liveness::compute_live_origins(
+        liveness_ctx,
+        &cfg_edge,
+        var_maybe_partly_initialized_on_exit,
+        &mut result,
+    );
+
+    let cfg_node = cfg_edge
+        .iter()
+        .map(|&(point1, _)| point1)
+        .chain(cfg_edge.iter().map(|&(_, point2)| point2))
+        .collect();
+
+    liveness::make_universal_regions_live::<LocalFacts>(
+        &mut origin_live_on_entry,
+        &cfg_node,
+        &all_facts.universal_region,
+    );
+
+    // 3) Borrow checking
+
+    let origin_live_on_entry = origin_live_on_entry.into();
+
+    let invalidates = Relation::from_iter(
+        all_facts
+            .invalidates
+            .iter()
+            .map(|&(point, loan)| (loan, point)),
+    );
+
+    let killed = all_facts.killed.clone().into();
+
+    let known_subset = all_facts.known_subset.clone().into();
+    let known_contains =
+        Output::compute_known_contains(&known_subset, &all_facts.placeholder);
+
+    let placeholder_origin: Relation<_> = Relation::from_iter(
+        all_facts
+            .universal_region
+            .iter()
+            .map(|&origin| (origin, ())),
+    );
+
+    let placeholder_loan = Relation::from_iter(
+        all_facts
+            .placeholder
+            .iter()
+            .map(|&(origin, loan)| (loan, origin)),
+    );
+
+    // Ask the variants to compute errors in their own way
+    let ctx = Context::<LocalFacts> {
+        origin_live_on_entry,
+        invalidates,
+        cfg_edge,
+        cfg_node: &cfg_node,
+        outlives: &all_facts.outlives,
+        borrow_region: &all_facts.borrow_region,
+        killed,
+        known_contains,
+        placeholder_origin,
+        placeholder_loan,
+        potential_errors: None,
+    };
+
+    blocky::compute(&ctx, &mut result)
+}
+
 fn test_facts(all_facts: &AllFacts, algorithms: &[Algorithm]) {
     let naive = Output::compute(all_facts, Algorithm::Naive, true);
 

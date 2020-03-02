@@ -18,9 +18,9 @@ struct InitializationStatus<T: FactTypes> {
     move_error: Relation<(T::Path, T::Point)>,
 }
 
-pub(super) struct InitializationResult<T: FactTypes>(
-    pub(super) Relation<(T::Variable, T::Point)>,
-    pub(super) Relation<(T::Path, T::Point)>,
+pub struct InitializationResult<T: FactTypes>(
+    pub Relation<(T::Variable, T::Point)>,
+    pub Relation<(T::Path, T::Point)>,
 );
 
 // Step 1: compute transitive closures of path operations. This would elaborate,
@@ -239,7 +239,7 @@ fn compute_move_errors<T: FactTypes>(
 // 2. Use this to compute both paths that may be initialized and paths that may
 //   have been deinitialized, which in turn can be used to find move errors (an
 //   access to a path that may be deinitialized).
-pub(super) fn compute<T: FactTypes>(
+pub fn compute<T: FactTypes>(
     ctx: InitializationContext<T>,
     cfg_edge: &Relation<(T::Point, T::Point)>,
     output: &mut Output<T>,
