@@ -31,6 +31,12 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
 
     // let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
     //     .join("inputs")
+    //     .join("subset-relations")
+    //     .join("nll-facts")
+    //     .join("missing_subset");
+
+    // let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+    //     .join("inputs")
     //     .join("vec-push-ref")
     //     .join("nll-facts")
     //     .join("foo1");
