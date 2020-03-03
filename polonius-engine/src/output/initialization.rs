@@ -5,7 +5,7 @@ use crate::output::{InitializationContext, Output};
 
 use datafrog::{Iteration, Relation, RelationLeaper};
 
-pub(super) fn init_var_maybe_initialized_on_exit<T: FactTypes>(
+pub fn init_var_maybe_initialized_on_exit<T: FactTypes>(
     ctx: InitializationContext<T>,
     cfg_edge: &Relation<(T::Point, T::Point)>,
     output: &mut Output<T>,

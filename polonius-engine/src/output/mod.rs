@@ -16,10 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::facts::{AllFacts, Atom, FactTypes};
 
 mod datafrog_opt;
-mod initialization;
-mod liveness;
+pub mod initialization;
+pub mod liveness;
 mod location_insensitive;
 mod naive;
+
+pub mod blocky;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Algorithm {
@@ -96,46 +98,46 @@ pub struct Output<T: FactTypes> {
 }
 
 /// Subset of `AllFacts` dedicated to initialization
-struct InitializationContext<T: FactTypes> {
-    child: Vec<(T::Path, T::Path)>,
-    path_belongs_to_var: Vec<(T::Path, T::Variable)>,
-    initialized_at: Vec<(T::Path, T::Point)>,
-    moved_out_at: Vec<(T::Path, T::Point)>,
-    path_accessed_at: Vec<(T::Path, T::Point)>,
+pub struct InitializationContext<T: FactTypes> {
+    pub child: Vec<(T::Path, T::Path)>,
+    pub path_belongs_to_var: Vec<(T::Path, T::Variable)>,
+    pub initialized_at: Vec<(T::Path, T::Point)>,
+    pub moved_out_at: Vec<(T::Path, T::Point)>,
+    pub path_accessed_at: Vec<(T::Path, T::Point)>,
 }
 
 /// Subset of `AllFacts` dedicated to liveness
-struct LivenessContext<T: FactTypes> {
-    var_used: Vec<(T::Variable, T::Point)>,
-    var_defined: Vec<(T::Variable, T::Point)>,
-    var_drop_used: Vec<(T::Variable, T::Point)>,
-    var_uses_region: Vec<(T::Variable, T::Origin)>,
-    var_drops_region: Vec<(T::Variable, T::Origin)>,
+pub struct LivenessContext<T: FactTypes> {
+    pub var_used: Vec<(T::Variable, T::Point)>,
+    pub var_defined: Vec<(T::Variable, T::Point)>,
+    pub var_drop_used: Vec<(T::Variable, T::Point)>,
+    pub var_uses_region: Vec<(T::Variable, T::Origin)>,
+    pub var_drops_region: Vec<(T::Variable, T::Origin)>,
 }
 
 /// Subset of `AllFacts` dedicated to borrow checking, and data ready to use by the variants
-struct Context<'ctx, T: FactTypes> {
+pub struct Context<'ctx, T: FactTypes> {
     // `Relation`s used as static inputs, by all variants
-    region_live_at: Relation<(T::Origin, T::Point)>,
-    invalidates: Relation<(T::Loan, T::Point)>,
+    pub region_live_at: Relation<(T::Origin, T::Point)>,
+    pub invalidates: Relation<(T::Loan, T::Point)>,
 
     // static inputs used via `Variable`s, by all variants
-    outlives: &'ctx Vec<(T::Origin, T::Origin, T::Point)>,
-    borrow_region: &'ctx Vec<(T::Origin, T::Loan, T::Point)>,
+    pub outlives: &'ctx Vec<(T::Origin, T::Origin, T::Point)>,
+    pub borrow_region: &'ctx Vec<(T::Origin, T::Loan, T::Point)>,
 
     // static inputs used by variants other than `LocationInsensitive`
-    cfg_node: &'ctx BTreeSet<T::Point>,
-    killed: Relation<(T::Loan, T::Point)>,
-    known_contains: Relation<(T::Origin, T::Loan)>,
-    placeholder_origin: Relation<(T::Origin, ())>,
-    placeholder_loan: Relation<(T::Loan, T::Origin)>,
+    pub cfg_node: &'ctx BTreeSet<T::Point>,
+    pub killed: Relation<(T::Loan, T::Point)>,
+    pub known_contains: Relation<(T::Origin, T::Loan)>,
+    pub placeholder_origin: Relation<(T::Origin, ())>,
+    pub placeholder_loan: Relation<(T::Loan, T::Origin)>,
 
     // while this static input is unused by `LocationInsensitive`, it's depended on by initialization
     // and liveness, so already computed by the time we get to borrowcking.
-    cfg_edge: Relation<(T::Point, T::Point)>,
+    pub cfg_edge: Relation<(T::Point, T::Point)>,
 
     // Partial results possibly used by other variants as input
-    potential_errors: Option<FxHashSet<T::Loan>>,
+    pub potential_errors: Option<FxHashSet<T::Loan>>,
 }
 
 impl<T: FactTypes> Output<T> {
@@ -364,7 +366,7 @@ impl<T: FactTypes> Output<T> {
 
     /// Computes the transitive closure of the `known_subset` relation, so that we have
     /// the full list of placeholder loans contained by the placeholder origins.
-    fn compute_known_contains(
+    pub fn compute_known_contains(
         known_subset: &Relation<(T::Origin, T::Origin)>,
         placeholder: &Vec<(T::Origin, T::Loan)>,
     ) -> Relation<(T::Origin, T::Loan)> {
@@ -389,7 +391,7 @@ impl<T: FactTypes> Output<T> {
         known_contains.complete()
     }
 
-    fn new(dump_enabled: bool) -> Self {
+    pub fn new(dump_enabled: bool) -> Self {
         Output {
             errors: FxHashMap::default(),
             subset_errors: FxHashMap::default(),
