@@ -1,20 +1,33 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
-//! A version of the Naive datalog analysis using Datafrog.
-
 use datafrog::{Iteration, Relation, RelationLeaper};
 use std::time::Instant;
 
-use crate::facts::FactTypes;
-use crate::output::{Context, Output};
+use std::collections::BTreeSet;
+use polonius_engine::FactTypes;
+use polonius_engine::output::Output;
+use rustc_hash::FxHashSet;
+
+/// Subset of `AllFacts` dedicated to borrow checking, and data ready to use by the variants
+pub struct Context<'ctx, T: FactTypes> {
+    // `Relation`s used as static inputs, by all variants
+    pub region_live_at: &'ctx Relation<(T::Origin, T::Point)>,
+    pub invalidates: &'ctx Relation<(T::Loan, T::Point)>,
+
+    // static inputs used via `Variable`s, by all variants
+    pub outlives: &'ctx FxHashSet<(T::Origin, T::Origin, T::Point)>,
+    pub borrow_region: &'ctx FxHashSet<(T::Origin, T::Loan, T::Point)>,
+
+    // static inputs used by variants other than `LocationInsensitive`
+    pub cfg_node: &'ctx BTreeSet<T::Point>,
+    pub killed: &'ctx Relation<(T::Loan, T::Point)>,
+
+    pub known_contains: &'ctx Relation<(T::Origin, T::Loan)>,
+    pub placeholder_origin: &'ctx Relation<(T::Origin, ())>,
+    pub placeholder_loan: &'ctx Relation<(T::Loan, T::Origin)>,
+
+    // while this static input is unused by `LocationInsensitive`, it's depended on by initialization
+    // and liveness, so already computed by the time we get to borrowcking.
+    pub cfg_edge: &'ctx Relation<(T::Point, T::Point)>,
+}
 
 pub struct BlockyResult<T: FactTypes> {
     pub errors: Relation<(T::Loan, T::Point)>,
@@ -30,16 +43,21 @@ pub fn compute<T: FactTypes>(
     ctx: &Context<T>,
     _result: &mut Output<T>,
 ) -> BlockyResult<T> {
-    let timer = Instant::now();
+    let _timer = Instant::now();
     
     // Static inputs
-    let region_live_at_rel = &ctx.region_live_at;
-    let cfg_edge_rel = &ctx.cfg_edge;
+    
+    // function data
+    let known_contains = ctx.known_contains;
+    let placeholder_origin = ctx.placeholder_origin;
+    let placeholder_loan = ctx.placeholder_loan;
+
+    // block data
+    let region_live_at_rel = ctx.region_live_at;
+    let cfg_edge_rel = ctx.cfg_edge;
     let cfg_node = ctx.cfg_node;
-    let killed_rel = &ctx.killed;
-    let known_contains = &ctx.known_contains;
-    let placeholder_origin = &ctx.placeholder_origin;
-    let placeholder_loan = &ctx.placeholder_loan;
+    let killed_rel = ctx.killed;
+    
 
     // Create a new iteration context, ...
     let mut iteration = Iteration::new();
@@ -76,11 +94,14 @@ pub fn compute<T: FactTypes>(
             .iter()
             .map(|&(loan, point)| ((loan, point), ())),
     );
-    region_live_at_var.extend(
-        region_live_at_rel
-            .iter()
-            .map(|&(origin, point)| ((origin, point), ())),
-    );
+
+    if !ctx.invalidates.is_empty() {
+        region_live_at_var.extend(
+            region_live_at_rel
+                .iter()
+                .map(|&(origin, point)| ((origin, point), ())),
+        );
+    }
 
     // Placeholder loans are contained by their placeholder origin at all points of the CFG.
     //
@@ -94,6 +115,7 @@ pub fn compute<T: FactTypes>(
         }
     }
 
+    let placeholder_loans_count = placeholder_loans.len();
     requires.extend(placeholder_loans);
 
     // .. and then start iterating rules!
@@ -176,14 +198,16 @@ pub fn compute<T: FactTypes>(
             |&(origin, loan, _point1), &point2| (origin, loan, point2),
         );
 
-        // borrow_live_at(loan, point) :-
-        //   requires(origin, loan, point),
-        //   region_live_at(origin, point).
-        borrow_live_at.from_join(
-            &requires_op,
-            &region_live_at_var,
-            |&(_origin, point), &loan, _| ((loan, point), ()),
-        );
+        if !ctx.invalidates.is_empty() {
+            // borrow_live_at(loan, point) :-
+            //   requires(origin, loan, point),
+            //   region_live_at(origin, point).
+            borrow_live_at.from_join(
+                &requires_op,
+                &region_live_at_var,
+                |&(_origin, point), &loan, _| ((loan, point), ()),
+            );
+        }
 
         // errors(loan, point) :-
         //   invalidates(loan, point),
@@ -214,28 +238,33 @@ pub fn compute<T: FactTypes>(
 
     let (errors, subset_errors) = (errors.complete(), subset_errors.complete());
 
-    info!(
-        "analysis done: {} `errors` tuples, {} `subset_errors` tuples, {:?}",
-        errors.len(),
-        subset_errors.len(),
-        timer.elapsed()
-    );
+    // eprintln!(
+    //     "analysis done: {} `errors` tuples, {} `subset_errors` tuples, {:?}",
+    //     errors.len(),
+    //     subset_errors.len(),
+    //     timer.elapsed()
+    // );
 
     let (subset, requires) = (subset.complete(), requires.complete());
 
-    // println!("errors: {}", errors.len());
-    // println!("subset_errors: {}", subset_errors.len());
+    // // println!("errors: {}", errors.len());
+    // // println!("subset_errors: {}", subset_errors.len());
     // println!("subset: {}", subset.len());
     // println!("subset initial: {}", ctx.outlives.len());
-    // println!("subset initial: {:#?}", ctx.outlives);
+    // // println!("subset initial: {:#?}", ctx.outlives);
     // println!("requires: {}", requires.len());
     // println!("requires initial: {}", ctx.borrow_region.len());
+    // println!("placeholder_loans: {}", placeholder_loans_count);
+    
 
     // the new tuples are
     // - the number of new subsets (subsets at the end of the computation minus the initial value)
     // - the number of new requires (requires at the end of the computation minus the initial value)
     let new_tuples = subset.len() - ctx.outlives.len()
         + requires.len() - ctx.borrow_region.len();
+
+    // TODO: enlever les placeholder loans ? ils sont dans require mais ne doivent pas compter comme des nouveaux tuples
+    // assert!(placeholder_loans_count == 0);
 
     BlockyResult {
         errors,

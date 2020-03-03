@@ -21,8 +21,6 @@ pub mod liveness;
 mod location_insensitive;
 mod naive;
 
-pub mod blocky;
-
 #[derive(Debug, Clone, Copy)]
 pub enum Algorithm {
     /// Simple rules, but slower to execute
