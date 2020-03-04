@@ -67,7 +67,7 @@ pub(crate) fn check_program(
     let mut tables = InternerTables::new();
     let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
 
-    let output = Output::compute(&facts, algorithm, dump_enabled);
+    let output = Output::compute(&facts, algorithm, dump_enabled, Some(&tables));
     FactChecker {
         facts,
         output,

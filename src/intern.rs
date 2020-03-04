@@ -49,6 +49,15 @@ pub(crate) struct InternerTables {
     pub(crate) paths: Interner<Path>,
 }
 
+impl polonius_engine::output::Unterner<LocalFacts> for InternerTables {
+    fn untern_origin(&self, origin: Origin) -> &str {
+        self.origins.untern(origin)
+    }
+    fn untern_point(&self, point: Point) -> &str {
+        self.points.untern(point)
+    }
+}
+
 impl InternerTables {
     pub(crate) fn new() -> Self {
         Self {

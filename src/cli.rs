@@ -68,7 +68,7 @@ pub fn main(opt: Options) -> Result<(), Error> {
             let algorithm = opt.algorithm;
             let graphviz_output = graphviz_file.is_some() || liveness_graph_file.is_some();
             let (duration, output) =
-                timed(|| Output::compute(&all_facts, algorithm, verbose || graphviz_output));
+                timed(|| Output::compute(&all_facts, algorithm, verbose || graphviz_output, Some(tables)));
             (duration, all_facts, output)
         };
 

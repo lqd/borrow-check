@@ -21,6 +21,13 @@ pub mod liveness;
 mod location_insensitive;
 mod naive;
 
+pub mod blocky;
+
+pub trait Unterner<T: FactTypes> {
+    fn untern_point(&self, point: T::Point) -> &str;
+    fn untern_origin(&self, origin: T::Origin) -> &str;
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Algorithm {
     /// Simple rules, but slower to execute
@@ -40,6 +47,8 @@ pub enum Algorithm {
     /// Combination of the fast `LocationInsensitive` pre-pass, followed by
     /// the more expensive `DatafrogOpt` variant.
     Hybrid,
+
+    Blocky,
 }
 
 impl Algorithm {
@@ -66,6 +75,7 @@ impl ::std::str::FromStr for Algorithm {
             "locationinsensitive" => Ok(Algorithm::LocationInsensitive),
             "compare" => Ok(Algorithm::Compare),
             "hybrid" => Ok(Algorithm::Hybrid),
+            "blocky" => Ok(Algorithm::Blocky),
             _ => Err(String::from(
                 "valid values: Naive, DatafrogOpt, LocationInsensitive, Compare, Hybrid",
             )),
@@ -126,6 +136,8 @@ pub struct Context<'ctx, T: FactTypes> {
     // static inputs used by variants other than `LocationInsensitive`
     pub cfg_node: &'ctx BTreeSet<T::Point>,
     pub killed: Relation<(T::Loan, T::Point)>,
+
+    pub known_subset: Relation<(T::Origin, T::Origin)>,
     pub known_contains: Relation<(T::Origin, T::Loan)>,
     pub placeholder_origin: Relation<(T::Origin, ())>,
     pub placeholder_loan: Relation<(T::Loan, T::Origin)>,
@@ -147,8 +159,13 @@ impl<T: FactTypes> Output<T> {
     /// - in cases where `LocationInsensitive` variant is ran as a filtering pre-pass,
     ///   partial results can also be stored in the context, so that the following
     ///   variant can use it to prune its own input data
-    pub fn compute(all_facts: &AllFacts<T>, algorithm: Algorithm, dump_enabled: bool) -> Self {
+    pub fn compute(all_facts: &AllFacts<T>, algorithm: Algorithm, dump_enabled: bool, unterner: Option<&dyn Unterner<T>>) -> Self {
         let mut result = Output::new(dump_enabled);
+
+        if let Algorithm::Blocky = algorithm {
+            blocky::blockify_my_love(all_facts.clone(), unterner.expect("wtf"), &mut result);
+            return result;
+        }
 
         // TODO: remove all the cloning thereafter, but that needs to be done in concert with rustc
 
@@ -255,6 +272,7 @@ impl<T: FactTypes> Output<T> {
             outlives: &all_facts.outlives,
             borrow_region: &all_facts.borrow_region,
             killed,
+            known_subset,
             known_contains,
             placeholder_origin,
             placeholder_loan,
@@ -262,6 +280,7 @@ impl<T: FactTypes> Output<T> {
         };
 
         let errors = match algorithm {
+            Algorithm::Blocky => todo!(),
             Algorithm::LocationInsensitive => location_insensitive::compute(&ctx, &mut result),
             Algorithm::Naive => {
                 let (errors, subset_errors) = naive::compute(&ctx, &mut result);
