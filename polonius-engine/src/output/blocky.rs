@@ -44,7 +44,8 @@ struct BlockyResult<T: FactTypes> {
 
 pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn super::Unterner<T>, mut output: &mut Output<T>) {
     // function data
-    // note: it's likely that known_subset is already a TC in the facts themselves
+    // note: the `known_subset` relation in the facts does not necessarily contain its whole transitive closure,
+    // so compute it.
     let known_subset = {
         let mut iteration = Iteration::new();
 
