@@ -23,11 +23,11 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 pub fn blocky() -> Result<(), Box<dyn Error>> {
-    let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("inputs")
-        .join("smoke-test")
-        .join("nll-facts")
-        .join("well_formed_function_inputs");
+    // let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+    //     .join("inputs")
+    //     .join("smoke-test")
+    //     .join("nll-facts")
+    //     .join("well_formed_function_inputs");
 
     // let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
     //     .join("inputs")
@@ -41,10 +41,10 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
     //     .join("nll-facts")
     //     .join("foo1");
 
-    // let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-    //     .join("inputs")
-    //     .join("clap-rs")
-    //     .join("app-parser-{{impl}}-add_defaults");
+    let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("inputs")
+        .join("clap-rs")
+        .join("app-parser-{{impl}}-add_defaults");
 
     // TODO: check that facts are not lost at the interface between 2 blocks
     // for this example there's an edge from mid bb7.7 to bb9, verify that eg the
@@ -57,79 +57,142 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
     let facts = tab_delim::load_tab_delimited_facts(&mut tables, &facts_dir)?;
 
     // function data
-    // // The set of "interesting" loans
-    // let interesting_loan: FxHashSet<_> = facts
-    //     .invalidates
-    //     .iter()
-    //     .map(|&(_point, loan)| loan)
-    //     .collect();
-    // println!("interesting_loan: {}", interesting_loan.len());
+    // note: it's likely that known_subset is already a TC in the faacts themselves
+    let known_subset = {
+        use datafrog::{Iteration, RelationLeaper};
+        let mut iteration = Iteration::new();
 
-    // // The "interesting" borrow regions are the ones referring to loans for which an error could occur
-    // let interesting_borrow_region: FxHashSet<_> = facts
-    //     .borrow_region
-    //     .iter()
-    //     .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
-    //     .copied()
-    //     .collect();
-    // println!("facts borrow_region: {}, interesting_borrow_region: {}", facts.borrow_region.len(), interesting_borrow_region.len());
+        let known_subset_base: Relation<_> = facts.known_subset.clone().into();
+        let known_subset = iteration.variable("known_subset");
 
-    // // The interesting origins are:
-    // // - for illegal access errors: any origin into which an interesting loan could flow.
-    // // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
-    // //   be tightened further to some of the placeholders which are _not_ in the
-    // //   `known_subset` relation: they are the only ones into which an unexpected placeholder
-    // //   loan can flow)
-    // let interesting_origin = {
-    //     use datafrog::Iteration;
+        // known_subset(Origin1, Origin2) :-
+        //   known_subset_base(Origin1, Origin2).
+        known_subset.extend(known_subset_base.iter());
 
-    //     let mut iteration = Iteration::new();
+        while iteration.changed() {
+            // known_subset(Origin1, Origin3) :-
+            //   known_subset(Origin1, Origin2),
+            //   known_subset_base(Origin2, Origin3).
+            known_subset.from_leapjoin(
+                &known_subset,
+                known_subset_base.extend_with(|&(_origin1, origin2)| origin2),
+                |&(origin1, _origin2), &origin3| (origin1, origin3),
+            );
+        }
 
-    //     let outlives_o1 = Relation::from_iter(
-    //         facts
-    //             .outlives
-    //             .iter()
-    //             .map(|&(origin1, origin2, _point)| (origin1, origin2)),
-    //     );
+        known_subset.complete()
+    };
+    println!("known_subset facts: {}, TC: {}", facts.known_subset.len(), known_subset.len());
 
-    //     let interesting_origin = iteration.variable::<(Origin, ())>("interesting_origin");
+    // The set of "interesting" loans
+    let interesting_loan: FxHashSet<_> = facts
+        .invalidates
+        .iter()
+        .map(|&(_point, loan)| loan)
+        .collect();
+    println!("interesting_loan: {}", interesting_loan.len());
 
-    //     // interesting_origin(Origin) :-
-    //     //   interesting_borrow_region(Origin, _, _);
-    //     interesting_origin.extend(
-    //         interesting_borrow_region
-    //             .iter()
-    //             .map(|&(origin, _loan, _point)| (origin, ())),
-    //     );
+    // The "interesting" borrow regions are the ones referring to loans for which an error could occur
+    let interesting_borrow_region: FxHashSet<_> = facts
+        .borrow_region
+        .iter()
+        .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
+        .copied()
+        .collect();
+    println!(
+        "facts borrow_region: {}, interesting_borrow_region: {}",
+        facts.borrow_region.len(),
+        interesting_borrow_region.len()
+    );
 
-    //     // interesting_origin(Origin) :-
-    //     //   placeholder(Origin, _);
-    //     interesting_origin.extend(
-    //         facts
-    //             .placeholder
-    //             .iter()
-    //             .map(|&(origin, _loan)| (origin, ())),
-    //     );
+    // The interesting origins are:
+    // - for illegal access errors: any origin into which an interesting loan could flow.
+    // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
+    //   be tightened further to some of the placeholders which are _not_ in the
+    //   `known_subset` relation: they are the only ones into which an unexpected placeholder
+    //   loan can flow)
+    let (interesting_origin, interesting_placeholder) = {
+        use datafrog::Iteration;
 
-    //     while iteration.changed() {
-    //         // interesting_origin(Origin2) :-
-    //         //   outlives(Origin1, Origin2, _),
-    //         //   interesting_origin(Origin1, _, _);
-    //         interesting_origin.from_join(
-    //             &interesting_origin,
-    //             &outlives_o1,
-    //             |_origin1, (), &origin2| (origin2, ()),
-    //         );
-    //     }
+        let mut iteration = Iteration::new();
 
-    //     interesting_origin
-    //         .complete()
-    //         .iter()
-    //         .map(|&(origin1, _)| origin1)
-    //         .collect::<FxHashSet<_>>()
-    // };
+        let outlives_o1 = Relation::from_iter(
+            facts
+                .outlives
+                .iter()
+                .map(|&(origin1, origin2, _point)| (origin1, origin2)),
+        );
 
-    // println!("interesting_origin: {}", interesting_origin.len());
+        let interesting_origin = iteration.variable::<(Origin, ())>("interesting_origin");
+        let placeholder_origin_step1 =
+            iteration.variable::<((Origin, Origin), ())>("placeholder_origin_step1");
+        let placeholder_origin = iteration.variable::<(Origin, ())>("placeholder_origin");
+
+        // interesting_origin(Origin) :-
+        //   interesting_borrow_region(Origin, _, _);
+        interesting_origin.extend(
+            interesting_borrow_region
+                .iter()
+                .map(|&(origin, _loan, _point)| (origin, ())),
+        );
+
+        // interesting_origin(Origin) :-
+        //   placeholder(Origin, _);
+        // interesting_origin.extend(
+        //     facts
+        //         .placeholder
+        //         .iter()
+        //         .map(|&(origin, _loan)| (origin, ())),
+        // );
+        placeholder_origin.extend(
+            facts
+                .placeholder
+                .iter()
+                .map(|&(origin, _loan)| (origin, ())),
+        );
+
+        while iteration.changed() {
+            // interesting_origin(Origin2) :-
+            //   outlives(Origin1, Origin2, _),
+            //   interesting_origin(Origin1, _, _);
+            interesting_origin.from_join(
+                &interesting_origin,
+                &outlives_o1,
+                |_origin1, (), &origin2| (origin2, ()),
+            );
+
+            // placeholder_origin(Origin2) :-
+            //   placeholder_origin(Origin1, _, _),
+            //   outlives(Origin1, Origin2, _),
+            //   !known_subset(Origin1, Origin2);
+            placeholder_origin_step1.from_join(
+                &placeholder_origin,
+                &outlives_o1,
+                |&origin1, (), &origin2| ((origin1, origin2), ()),
+            );
+            placeholder_origin.from_antijoin(
+                &placeholder_origin_step1,
+                &known_subset,
+                |&(_origin1, origin2), ()| (origin2, ()),
+            );
+        }
+
+        (
+            interesting_origin
+                .complete()
+                .iter()
+                .map(|&(origin1, _)| origin1)
+                .collect::<FxHashSet<_>>(),
+            placeholder_origin
+                .complete()
+                .iter()
+                .map(|&(origin1, _)| origin1)
+                .collect::<FxHashSet<_>>()
+        )
+    };
+
+    println!("interesting_origin: {}", interesting_origin.len());
+    println!("interesting_placeholder: {}", interesting_placeholder.len());
 
     // block data
 
@@ -152,9 +215,9 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
         // println!("borrow_region {:?} is from {} block {}", fact, point, block_idx);
 
         // interestingness filter
-        // if !interesting_borrow_region.contains(&fact) {
-        //     continue;
-        // }
+        if !interesting_borrow_region.contains(&fact) {
+            // continue;
+        }
 
         block_borrow_region
             .entry(block_idx)
@@ -224,19 +287,22 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
 
     let mut block_outlives: FxHashMap<usize, FxHashSet<(Origin, Origin, Point)>> =
         Default::default();
+    let mut xxx = 0;
     for fact in facts.outlives.iter() {
         let (_point, block_idx) = block_from_point(fact.2);
         // println!("outlives {:?} is from {} block {}", fact, point, block_idx);
 
         // interestingness filter
-        // if !interesting_origin.contains(&fact.0) {
-        //     continue;
-        // }
+        if interesting_origin.contains(&fact.0) || interesting_placeholder.contains(&fact.0) {
+            // block_outlives.entry(block_idx).or_default().insert(*fact);
+            xxx += 1;
+        }
 
         block_outlives.entry(block_idx).or_default().insert(*fact);
     }
 
     println!("block_outlives done");
+    println!("block_outlives done: {} / {}", xxx, facts.outlives.len());
 
     let mut block_invalidates: FxHashMap<usize, FxHashSet<(Point, Loan)>> = Default::default();
     for fact in facts.invalidates.iter() {
@@ -252,9 +318,12 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
     println!("block_invalidates done");
 
     // function data
-
-    let (known_contains, placeholder_origin, placeholder_loan, region_live_at) =
-        create_function_data(facts);
+    let (
+        // known_contains,
+        placeholder_origin,
+        placeholder_loan,
+        region_live_at,
+    ) = create_function_data(facts);
     println!("function data computed");
 
     // liveness block data
@@ -343,7 +412,6 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
             .into_iter()
             .collect();
 
-        
         let invalidates =
             Relation::from_iter(invalidates.iter().map(|&(point, loan)| (loan, point)));
 
@@ -406,7 +474,8 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
         // TODO: other interesting case: no regions are live in a block
 
         let result = run_blocky(
-            &known_contains,
+            // &known_contains,
+            &known_subset,
             &placeholder_origin,
             &placeholder_loan,
             &bb_facts.region_live_at,
@@ -449,9 +518,11 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
             println!("\n");
             for error in result.subset_errors.iter() {
                 println!(
-                    "found a subset error, {:?}, at {}",
+                    "found a subset error, {:?}, {} flows into {} at {}",
                     error,
-                    tables.points.untern(error.2)
+                    tables.origins.untern(error.0),
+                    tables.origins.untern(error.1),
+                    tables.points.untern(error.2),
                 );
             }
             println!("\n");
@@ -525,7 +596,11 @@ pub fn blocky() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    println!("\nblocky elapsed: {:?}, took {} iterations", timer.elapsed(), count);
+    println!(
+        "\nblocky elapsed: {:?}, took {} iterations",
+        timer.elapsed(),
+        count
+    );
 
     Ok(())
 }
@@ -536,7 +611,7 @@ use crate::facts::LocalFacts;
 fn create_function_data(
     all_facts: AllFacts,
 ) -> (
-    Relation<(Origin, Loan)>,
+    // Relation<(Origin, Loan)>,
     Relation<(Origin, ())>,
     Relation<(Loan, Origin)>,
     Vec<(Origin, Point)>,
@@ -580,8 +655,7 @@ fn create_function_data(
         &mut result,
     );
 
-    let known_subset = all_facts.known_subset.into();
-    let known_contains = Output::compute_known_contains(&known_subset, &all_facts.placeholder);
+    // let known_contains = Output::compute_known_contains(&known_subset, &all_facts.placeholder);
 
     let placeholder_origin: Relation<_> = Relation::from_iter(
         all_facts
@@ -598,7 +672,7 @@ fn create_function_data(
     );
 
     (
-        known_contains,
+        // known_contains,
         placeholder_origin,
         placeholder_loan,
         region_live_at,
@@ -606,7 +680,8 @@ fn create_function_data(
 }
 
 fn run_blocky(
-    known_contains: &Relation<(Origin, Loan)>,
+    // known_contains: &Relation<(Origin, Loan)>,
+    known_subset: &Relation<(Origin, Origin)>,
     placeholder_origin: &Relation<(Origin, ())>,
     placeholder_loan: &Relation<(Loan, Origin)>,
     block_region_live_at: &Relation<(Origin, Point)>,
@@ -627,9 +702,10 @@ fn run_blocky(
         outlives: block_outlives,
         borrow_region: block_borrow_region,
         killed: block_killed,
-        known_contains: known_contains,
-        placeholder_origin: placeholder_origin,
-        placeholder_loan: placeholder_loan,
+        // known_contains,
+        known_subset,
+        placeholder_origin,
+        placeholder_loan,
     };
 
     blocky::compute(&ctx, &mut result)
