@@ -137,7 +137,11 @@ pub struct Context<'ctx, T: FactTypes> {
     pub cfg_node: &'ctx BTreeSet<T::Point>,
     pub killed: Relation<(T::Loan, T::Point)>,
 
+    // TODO: The `known_subset` relation in the facts does not necessarily contain all the transitive
+    // subsets. The transitive closure is always needed, so this version here is fully closed
+    // over.
     pub known_subset: Relation<(T::Origin, T::Origin)>,
+
     pub known_contains: Relation<(T::Origin, T::Loan)>,
     pub placeholder_origin: Relation<(T::Origin, ())>,
     pub placeholder_loan: Relation<(T::Loan, T::Origin)>,
@@ -248,6 +252,33 @@ impl<T: FactTypes> Output<T> {
         let known_subset = all_facts.known_subset.clone().into();
         let known_contains =
             Output::<T>::compute_known_contains(&known_subset, &all_facts.placeholder);
+
+        // // `known_subset` is a list of all the `'a: 'b` subset relations the user gave:
+        // // it's not required to be transitive. This following relation is its transitive closure.
+        // let known_subset = {
+        //     use datafrog::{Iteration, RelationLeaper};
+        //     let mut iteration = Iteration::new();
+
+        //     let known_subset_base: Relation<_> = all_facts.known_subset.clone().into();
+        //     let known_subset = iteration.variable("known_subset");
+
+        //     // known_subset(Origin1, Origin2) :-
+        //     //   known_subset_base(Origin1, Origin2).
+        //     known_subset.extend(known_subset_base.iter());
+
+        //     while iteration.changed() {
+        //         // known_subset(Origin1, Origin3) :-
+        //         //   known_subset(Origin1, Origin2),
+        //         //   known_subset_base(Origin2, Origin3).
+        //         known_subset.from_leapjoin(
+        //             &known_subset,
+        //             known_subset_base.extend_with(|&(_origin1, origin2)| origin2),
+        //             |&(origin1, _origin2), &origin3| (origin1, origin3),
+        //         );
+        //     }
+
+        //     known_subset.complete()
+        // };
 
         let placeholder_origin: Relation<_> = Relation::from_iter(
             all_facts
