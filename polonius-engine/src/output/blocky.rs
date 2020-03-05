@@ -1,11 +1,12 @@
 use datafrog::{Iteration, Relation, RelationLeaper};
 use std::time::Instant;
 
-// use std::collections::BTreeSet;
 use crate::FactTypes;
 use crate::output::Output;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
+// use std::collections::BTreeSet;
+
 
 /// Subset of `AllFacts` dedicated to borrow checking, and data ready to use by the variants
 struct BlockyContext<'ctx, T: FactTypes> {
@@ -127,18 +128,18 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
         // interesting_origin(Origin) :-
         //   placeholder(Origin, _);
-        // interesting_origin.extend(
-        //     facts
-        //         .placeholder
-        //         .iter()
-        //         .map(|&(origin, _loan)| (origin, ())),
-        // );
-        placeholder_origin.extend(
+        interesting_origin.extend(
             facts
                 .placeholder
                 .iter()
                 .map(|&(origin, _loan)| (origin, ())),
         );
+        // placeholder_origin.extend(
+        //     facts
+        //         .placeholder
+        //         .iter()
+        //         .map(|&(origin, _loan)| (origin, ())),
+        // );
 
         while iteration.changed() {
             // interesting_origin(Origin2) :-
@@ -211,7 +212,7 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
         // interestingness filter
         if !interesting_borrow_region.contains(&fact) {
-            // continue;
+            continue;
         }
 
         xxx += 1;
@@ -322,10 +323,11 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
     // function data
     let (
-        // known_contains,
+        _known_contains,
         placeholder_origin,
-        // placeholder_loan,
+        _placeholder_loan,
         region_live_at,
+        universal_regions,
     ) = create_function_data(facts, &mut output);
     println!("function data computed");
 
@@ -338,7 +340,7 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
         // Interestingness filter (should be uplifted to liveness itself as usual, this is just a test)
         if !interesting_origin.contains(&fact.0) {
-            // continue;
+            continue;
         }
 
         xxx += 1;
@@ -397,11 +399,12 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         let invalidates = block_invalidates.remove(&block_idx).unwrap_or_default();
 
         // TODO: filtrer les 3 relations suivantes pour ne traquer que les loans et origins intéressants
-        let region_live_at: Vec<_> = block_region_live_at
+        let mut region_live_at: Vec<_> = block_region_live_at
             .remove(&block_idx)
             .unwrap_or_default()
             .into_iter()
             .collect();
+
         let borrow_region = block_borrow_region.remove(&block_idx).unwrap_or_default();
 
         let outlives = block_outlives.remove(&block_idx).unwrap_or_default();
@@ -422,11 +425,17 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         let invalidates =
             Relation::from_iter(invalidates.iter().map(|&(point, loan)| (loan, point)));
 
-        // let cfg_node = cfg_edge
-        //     .iter()
-        //     .map(|&(point1, _)| point1)
-        //     .chain(cfg_edge.iter().map(|&(_, point2)| point2))
-        //     .collect();
+        let cfg_node = cfg_edge
+            .iter()
+            .map(|&(point1, _)| point1)
+            .chain(cfg_edge.iter().map(|&(_, point2)| point2))
+            .collect();
+
+        super::liveness::make_universal_regions_live::<T>(
+            &mut region_live_at,
+            &cfg_node,
+            &universal_regions,
+        );
 
         let ctx = BlockContext {
             region_live_at: region_live_at.into(),
@@ -480,20 +489,22 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
         // TODO: other interesting case: no regions are live in a block
 
-        let result = run_blocky::<T>(
-            &mut output,
-            // &known_contains,
-            &known_subset,
-            &placeholder_origin,
-            // &placeholder_loan,
-            &bb_facts.region_live_at,
-            &bb_facts.cfg_edge,
-            // &bb_facts.cfg_node,
-            &bb_facts.killed,
-            &bb_facts.invalidates,
-            &bb_facts.borrow_region,
-            &bb_facts.outlives,
-        );
+        let ctx = BlockyContext::<T> {
+            known_subset: &known_subset,
+            placeholder_origin: &placeholder_origin,
+            // placeholder_loan: &placeholder_loan,
+            // known_contains: &known_contains,
+
+            cfg_edge: &bb_facts.cfg_edge,
+            region_live_at: &bb_facts.region_live_at,
+            borrow_region: &bb_facts.borrow_region,
+            outlives: &bb_facts.outlives,
+            // cfg_node: &bb_facts.cfg_node,
+            killed: &bb_facts.killed,
+            invalidates: &bb_facts.invalidates,
+        };
+    
+        let result = compute(&ctx, output, unterner);        
         // println!("new tuples: {:?}", result.new_tuples);
         // println!("errors: {:?}", result.errors.elements);
 
@@ -614,10 +625,11 @@ fn create_function_data<T: FactTypes>(
     all_facts: crate::AllFacts<T>,
     mut result: &mut Output<T>,
 ) -> (
-    // Relation<(Origin, Loan)>,
+    Relation<(T::Origin, T::Loan)>,
     Relation<(T::Origin, ())>,
-    // Relation<(T::Loan, T::Origin)>,
+    Relation<(T::Loan, T::Origin)>,
     Vec<(T::Origin, T::Point)>,
+    Vec<T::Origin>,
 ) {
     use super::initialization;
     use super::liveness;
@@ -656,7 +668,8 @@ fn create_function_data<T: FactTypes>(
         &mut result,
     );
 
-    // let known_contains = Output::compute_known_contains(&known_subset, &all_facts.placeholder);
+    let known_subset = all_facts.known_subset.into();
+    let known_contains = Output::<T>::compute_known_contains(&known_subset, &all_facts.placeholder);
 
     let placeholder_origin: Relation<_> = Relation::from_iter(
         all_facts
@@ -665,57 +678,26 @@ fn create_function_data<T: FactTypes>(
             .map(|&origin| (origin, ())),
     );
 
-    // let placeholder_loan = Relation::from_iter(
-    //     all_facts
-    //         .placeholder
-    //         .iter()
-    //         .map(|&(origin, loan)| (loan, origin)),
-    // );
+    let placeholder_loan = Relation::from_iter(
+        all_facts
+            .placeholder
+            .iter()
+            .map(|&(origin, loan)| (loan, origin)),
+    );
 
     (
-        // known_contains,
+        known_contains,
         placeholder_origin,
-        // placeholder_loan,
+        placeholder_loan,
         region_live_at,
+        all_facts.universal_region,
     )
-}
-
-fn run_blocky<T: FactTypes>(
-    mut result: &mut Output<T>,
-    // known_contains: &Relation<(Origin, Loan)>,
-    known_subset: &Relation<(T::Origin, T::Origin)>,
-    placeholder_origin: &Relation<(T::Origin, ())>,
-    // placeholder_loan: &Relation<(T::Loan, T::Origin)>,
-    block_region_live_at: &Relation<(T::Origin, T::Point)>,
-    block_cfg_edge: &Relation<(T::Point, T::Point)>,
-    // block_cfg_node: &BTreeSet<T::Point>,
-    block_killed: &Relation<(T::Loan, T::Point)>,
-    block_invalidates: &Relation<(T::Loan, T::Point)>,
-    block_borrow_region: &FxHashSet<(T::Origin, T::Loan, T::Point)>,
-    block_outlives: &FxHashSet<(T::Origin, T::Origin, T::Point)>,
-) -> BlockyResult<T> {
-    // println!("block_region_live_at: {}", block_region_live_at.len());
-
-    let ctx = BlockyContext::<T> {
-        region_live_at: block_region_live_at,
-        invalidates: block_invalidates,
-        cfg_edge: block_cfg_edge,
-        // cfg_node: block_cfg_node,
-        outlives: block_outlives,
-        borrow_region: block_borrow_region,
-        killed: block_killed,
-        // known_contains,
-        known_subset,
-        placeholder_origin,
-        // placeholder_loan,
-    };
-
-    compute(&ctx, &mut result)
 }
 
 fn compute<T: FactTypes>(
     ctx: &BlockyContext<T>,
     _result: &mut Output<T>,
+    _unterner: &dyn super::Unterner<T>,
 ) -> BlockyResult<T> {
     let _timer = Instant::now();
     
@@ -793,7 +775,7 @@ fn compute<T: FactTypes>(
     //     }
     // }
 
-    // let placeholder_loans_count = placeholder_loans.len();
+    // // let placeholder_loans_count = placeholder_loans.len();
     // requires.extend(placeholder_loans);
 
     // .. and then start iterating rules!
@@ -982,7 +964,7 @@ fn compute<T: FactTypes>(
     // // println!("subset initial: {:#?}", ctx.outlives);
     // println!("requires: {}", requires.len());
     // println!("requires initial: {}", ctx.borrow_region.len());
-    // println!("placeholder_loans: {}", placeholder_loans_count);
+    // // println!("placeholder_loans: {}", placeholder_loans_count);
 
     // let subset_placeholder = subset_placeholder.complete();
     // println!("subset_placeholder: {}", subset_placeholder.len());

@@ -53,8 +53,13 @@ impl polonius_engine::output::Unterner<LocalFacts> for InternerTables {
     fn untern_origin(&self, origin: Origin) -> &str {
         self.origins.untern(origin)
     }
+
     fn untern_point(&self, point: Point) -> &str {
         self.points.untern(point)
+    }
+
+    fn untern_loan(&self, loan: Loan) -> &str {
+        self.loans.untern(loan)
     }
 }
 

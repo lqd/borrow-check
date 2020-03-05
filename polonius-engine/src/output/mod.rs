@@ -26,6 +26,7 @@ pub mod blocky;
 pub trait Unterner<T: FactTypes> {
     fn untern_point(&self, point: T::Point) -> &str;
     fn untern_origin(&self, origin: T::Origin) -> &str;
+    fn untern_loan(&self, loan: T::Loan) -> &str;
 }
 
 #[derive(Debug, Clone, Copy)]
