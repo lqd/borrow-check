@@ -26,6 +26,9 @@ pub(super) fn compute<T: FactTypes>(
         let cfg_edge_rel = &ctx.cfg_edge;
         let killed_rel = &ctx.killed;
 
+        let known_subset = &ctx.known_subset;
+        let placeholder_origin = &ctx.placeholder_origin;
+
         // Create a new iteration context, ...
         let mut iteration = Iteration::new();
 
@@ -126,6 +129,12 @@ pub(super) fn compute<T: FactTypes>(
         // .decl errors(loan, point)
         let errors = iteration.variable("errors");
 
+        let subset_errors = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_errors");
+
+        let subset_placeholder = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_placeholder");
+        let subset_placeholder_o2p = iteration.variable_indistinct("subset_placeholder_o2p");
+
+
         // Make "variable" versions of the relations, needed for joins.
         borrow_region_op.extend(
             ctx.borrow_region
@@ -172,6 +181,15 @@ pub(super) fn compute<T: FactTypes>(
                 .borrow_mut()
                 .elements
                 .retain(|&((origin1, _), origin2)| origin1 != origin2);
+            subset_placeholder
+                .recent
+                .borrow_mut()
+                .elements
+                .retain(|&(origin1, origin2, _)| origin1 != origin2);
+
+            subset_placeholder_o2p.from_map(&subset_placeholder, |&(origin1, origin2, point)| {
+                ((origin2, point), origin1)
+            });
 
             // live_to_dying_regions(origin1, origin2, point1, point2) :-
             //   subset(origin1, origin2, point1),
@@ -372,6 +390,47 @@ pub(super) fn compute<T: FactTypes>(
             errors.from_join(&invalidates, &borrow_live_at, |&(loan, point), _, _| {
                 (loan, point)
             });
+
+            // subset_placeholder(Origin1, Origin2, Point) :-
+            //     subset(Origin1, Origin2, Point),
+            //     placeholder_origin(Origin1).
+            subset_placeholder.from_leapjoin(
+                &subset_o1p,
+                (
+                    placeholder_origin.extend_with(|&((origin1, _point), _origin2)| origin1),
+                    // remove symmetries:
+                    datafrog::ValueFilter::from(|&((origin1, _point), origin2), ()| {
+                        origin2 != origin1
+                    }),
+                ),
+                |&((origin1, point), origin2), _| (origin1, origin2, point)
+            );
+
+            // subset_placeholder(Origin1, Origin3, Point) :-
+            //     subset_placeholder(Origin1, Origin2, Point),
+            //     subset(Origin2, Origin3, Point).
+            subset_placeholder.from_join(
+                &subset_placeholder_o2p,
+                &subset_o1p,
+                |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point)
+            );
+
+            // subset_error(Origin1, Origin2, Point) :-
+            //     subset_placeholder(Origin1, Origin2, Point),
+            //     placeholder_origin(Origin2),
+            //     !known_subset(Origin1, Origin2).
+            subset_errors.from_leapjoin(
+                &subset_placeholder,
+                (
+                    placeholder_origin.extend_with(|&(_origin1, origin2, _point)| origin2),
+                    known_subset.filter_anti(|&(origin1, origin2, _point)| (origin1, origin2)),
+                    // remove symmetries:
+                    datafrog::ValueFilter::from(|&(origin1, origin2, _point), ()| {
+                        origin2 != origin1
+                    }),
+                ),
+                |&(origin1, origin2, point), _| (origin1, origin2, point),
+            );
         }
 
         if result.dump_enabled {
@@ -413,6 +472,16 @@ pub(super) fn compute<T: FactTypes>(
                     .or_default()
                     .push(loan);
             }
+        }
+
+        // Record illegal subset errors
+        let subset_errors = subset_errors.complete();
+        for &(origin1, origin2, location) in subset_errors.iter() {
+            result
+                .subset_errors
+                .entry(location)
+                .or_default()
+                .insert((origin1, origin2));
         }
 
         errors.complete()
