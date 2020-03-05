@@ -627,7 +627,7 @@ fn transitive_illegal_subset_error() {
 
 #[test]
 fn successes_in_subset_relations_dataset() {
-    let successes = ["valid_subset", "implied_bounds_subset"];
+    let successes = ["valid_subset", "implied_bounds_subset", "valid_transitive_subsets"];
 
     // these tests have no illegal access errors or subset errors
     for test_fn in &successes {
@@ -675,4 +675,33 @@ fn errors_in_subset_relations_dataset() {
         // that is the subset error we should find
         assert!(subset_error.contains(&(origin_b, origin_a)));
     }
+}
+
+#[test]
+fn errors_in_subset_relations_dataset2() {
+    let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("inputs")
+        .join("subset-relations")
+        .join("nll-facts")
+        .join("missing_transitive_subsets");
+    let tables = &mut intern::InternerTables::new();
+    let facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir).expect("facts");
+
+    // this function has no illegal access errors, but 3 subset errors over 15 points
+
+    // TODO: collect the origins at all these points to validate them 
+
+    let naive = Output::compute(&facts, Algorithm::Naive, false, None);
+    assert!(naive.errors.is_empty());
+    assert_eq!(naive.subset_errors.len(), 15);
+
+    let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, false, Some(tables));
+    assert!(location_insensitive.errors.is_empty());
+    assert_eq!(location_insensitive.subset_errors[&0.into()].len(), 3); // tmp meaningless location: the first point
+
+    let blocky = Output::compute(&facts, Algorithm::Blocky, false, Some(tables));
+    assert!(blocky.errors.is_empty());
+    assert_eq!(blocky.subset_errors.len(), 15);
+
+    assert_eq!(naive.subset_errors, blocky.subset_errors);
 }

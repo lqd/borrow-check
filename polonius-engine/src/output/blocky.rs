@@ -91,11 +91,6 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
         .copied()
         .collect();
-    println!(
-        "facts borrow_region: {}, interesting_borrow_region: {}",
-        facts.borrow_region.len(),
-        interesting_borrow_region.len()
-    );
 
     // The interesting origins are:
     // - for illegal access errors: any origin into which an interesting loan could flow.
@@ -134,12 +129,12 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
                 .iter()
                 .map(|&(origin, _loan)| (origin, ())),
         );
-        // placeholder_origin.extend(
-        //     facts
-        //         .placeholder
-        //         .iter()
-        //         .map(|&(origin, _loan)| (origin, ())),
-        // );
+        placeholder_origin.extend(
+            facts
+                .placeholder
+                .iter()
+                .map(|&(origin, _loan)| (origin, ())),
+        );
 
         while iteration.changed() {
             // interesting_origin(Origin2) :-
@@ -189,10 +184,10 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
     let block_from_point = |point| {
         let point = unterner.untern_point(point);
 
-        // point naming pattern: 
-        // - "Mid(bb0[12])" from rustc generated facts, 
+        // point naming pattern:
+        // - "Mid(bb0[12])" from rustc generated facts,
         // - "Mid(B0[12])" from polonius unit tests
-        
+
         let point_type_separator = point.find('(').unwrap();
         let point_block_separator = point.find('[').unwrap();
 
@@ -235,7 +230,6 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
     let mut block_successor: FxHashMap<usize, FxHashSet<usize>> = Default::default();
 
-    let mut xxx = 0;
     for fact in facts.cfg_edge.iter() {
         let (_point_from, block_from_idx) = block_from_point(fact.0);
         let (_point_to, block_to_idx) = block_from_point(fact.1);
@@ -247,14 +241,12 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
             .entry(block_from_idx)
             .or_default()
             .insert(*fact);
-        xxx += 1;
 
         if block_from_idx != block_to_idx {
             block_cfg_edge
                 .entry(block_to_idx)
                 .or_default()
                 .insert(*fact);
-            xxx += 1;
         }
 
         // if this a block terminator edge, record from/to blocks as the block interface edges
@@ -276,7 +268,7 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         }
     }
 
-    println!("block_cfg_edge done: {} / {}", xxx, facts.cfg_edge.len());
+    println!("block_cfg_edge done: {}", facts.cfg_edge.len());
 
     let mut block_killed: FxHashMap<usize, FxHashSet<(T::Loan, T::Point)>> = Default::default();
     for fact in facts.killed.iter() {
@@ -458,8 +450,9 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
 
     // TODO: maybe order the CFG better, eg a BFS here ?
     let mut blocks: VecDeque<_> = (0..block_count).collect();
-
     // println!("queue: {:?}", blocks.iter().take(10).collect::<Vec<_>>());
+
+    println!("");
 
     let mut count = 0;
     while let Some(block_idx) = blocks.pop_front() {
@@ -471,10 +464,11 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         }
 
         // println!("current block: {}", block_idx);
+        // println!("current block: {} / iteration: {}", block_idx, count);
         // println!("block to visit: {} - queue: {:?}", block_idx, blocks.iter().take(5).collect::<Vec<_>>());
         // println!("block to visit: {} - queue: {:?}", block_idx, blocks.len());
 
-        let bb_facts = &block_facts[&block_idx];
+        let bb_facts = block_facts.get(&block_idx).unwrap();
 
         // TODO: no invalidations means there can be no illegal access error here. Apart from
         // subset errors, and transporting loans across edges, part of the analysis can be avoided.
@@ -488,6 +482,12 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         // is equally applicable here.
 
         // TODO: other interesting case: no regions are live in a block
+
+        // if block_idx == 2139 {
+        //     println!();
+        //     println!("current block: {} / iteration: {}", block_idx, count);
+        //     println!("bb {} - input to subset / outlives: {:?}", block_idx, bb_facts.outlives.len());
+        // }
 
         let ctx = BlockyContext::<T> {
             known_subset: &known_subset,
@@ -503,8 +503,11 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
             killed: &bb_facts.killed,
             invalidates: &bb_facts.invalidates,
         };
-    
-        let result = compute(&ctx, output, unterner);        
+
+        // let timer = Instant::now();
+        let result = compute(&ctx, output, unterner);
+        // let elapsed = timer.elapsed();
+
         // println!("new tuples: {:?}", result.new_tuples);
         // println!("errors: {:?}", result.errors.elements);
 
@@ -546,44 +549,67 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
             }
         }
 
+        // if block_idx == 2138 || block_idx == 2139 {
+        // if block_idx == 2139 {
+        //     println!();
+        //     println!("current block: {} / iteration: {} / duration: {:?}", block_idx, count, elapsed);
+        //     println!("bb {} - new tuples: {:?}", block_idx, result.new_tuples);
+        //     println!("bb {} - input to subset / outlives: {:?}", block_idx, bb_facts.outlives.len());
+        //     println!("bb {} - input to requires / borrow_region: {:?}", block_idx, bb_facts.borrow_region.len());
+        //     println!("bb {} - result subset: {:?}", block_idx, result.subset.len());
+        //     println!("bb {} - result requires: {:?}", block_idx, result.requires.len());
+        //     println!();
+        // }
+
         // if we're not at a local fixpoint yet
         if result.new_tuples > 0 {
             if let Some(successor_blocks) = block_successor.get(&block_idx) {
                 // println!("block {} to: {:?} - queue pre-merging: {:?}", block_idx, successor_blocks, blocks.iter().take(5).collect::<Vec<_>>());
 
                 for &successor_block_idx in successor_blocks {
+                    // if successor_block_idx == 2139 {
+                    //     println!("merging current block {}, with successor block {}", block_idx, successor_block_idx);
+                    // }
+
                     // println!("merging current block {}, with successor block {}", block_idx, successor_block_idx);
                     let successor_facts = block_facts.get_mut(&successor_block_idx).unwrap();
 
                     // merge requires / subsets at the block interface: the new block needs to know only the new facts
                     // at its entry point
 
+                    // for fact in result.subset.iter() {
+                    //     let (_point, local_block_idx) = block_from_point(fact.2);
+                    //     if local_block_idx == successor_block_idx {
+                    //         // println!("merging 'subset' {:?} at {} from block {}, with block {}", fact, _point, block_idx, successor_block_idx);
+
+                    //         if block_idx == 2138 && successor_block_idx == 2139 {
+                    //             if !successor_facts.outlives.contains(&fact) {
+                    //                 println!("merging 'subset' {:?} at {} from block {}, with block {}", fact, _point, block_idx, successor_block_idx);
+                    //             }
+                    //         }
+                    //     }
+                    // }
+
+                    let successor_outlives = successor_facts.outlives.len();
+                    let successor_borrow_regions = successor_facts.borrow_region.len();
+
+                    successor_facts
+                        .outlives
+                        .extend(result.subset.iter().filter(|fact| {
+                            let (_, local_block_idx) = block_from_point(fact.2);
+                            local_block_idx == successor_block_idx
+                        }));
+                        
                     // for fact in result.requires.iter() {
                     //     let (_point, local_block_idx) = block_from_point(fact.2);
                     //     if local_block_idx == successor_block_idx {
                     //         println!("merging 'requires' {:?} at {} from block {}, with block {}", fact, _point, block_idx, successor_block_idx);
                     //     }
                     // }
-
-                    let successor_borrow_regions = successor_facts.borrow_region.len();
+                    
                     successor_facts
                         .borrow_region
                         .extend(result.requires.iter().filter(|fact| {
-                            let (_, local_block_idx) = block_from_point(fact.2);
-                            local_block_idx == successor_block_idx
-                        }));
-
-                    // for fact in result.subset.iter() {
-                    //     let (_point, local_block_idx) = block_from_point(fact.2);
-                    //     if local_block_idx == successor_block_idx {
-                    //         println!("merging 'subset' {:?} at {} from block {}, with block {}", fact, _point, block_idx, successor_block_idx);
-                    //     }
-                    // }
-
-                    let successor_outlives = successor_facts.outlives.len();
-                    successor_facts
-                        .outlives
-                        .extend(result.subset.iter().filter(|fact| {
                             let (_, local_block_idx) = block_from_point(fact.2);
                             local_block_idx == successor_block_idx
                         }));
@@ -592,11 +618,14 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
                     // the computation on the successor would result in a result we already have. We're already at a fixpoint state for
                     // the successor block.
 
-                    let is_successor_dirty = successor_facts.borrow_region.len()
-                        != successor_borrow_regions
-                        || successor_facts.outlives.len() != successor_outlives;
+                    let new_outlives_facts = successor_facts.outlives.len() != successor_outlives;
+                    let new_borrow_region_facts = successor_facts.borrow_region.len() != successor_borrow_regions;
+                    let is_successor_dirty = new_outlives_facts || new_borrow_region_facts;
 
-                    // println!("from block: {} - is successor {} dirty: {}", block_idx, successor_block_idx, is_successor_dirty);
+                    // if successor_block_idx == 2139 {
+                    //     println!("from block: {} - is successor {} dirty: {}", block_idx, successor_block_idx, is_successor_dirty);
+                    //     // dbg!(new_outlives_facts, new_borrow_region_facts);
+                    // }
 
                     if is_successor_dirty {
                         if let Some(idx) = blocks.iter().position(|&e| e == successor_block_idx) {
@@ -700,9 +729,9 @@ fn compute<T: FactTypes>(
     _unterner: &dyn super::Unterner<T>,
 ) -> BlockyResult<T> {
     let _timer = Instant::now();
-    
+
     // Static inputs
-    
+
     // function data
     // let known_contains = ctx.known_contains;
     let known_subset = ctx.known_subset;
@@ -714,7 +743,7 @@ fn compute<T: FactTypes>(
     let cfg_edge_rel = ctx.cfg_edge;
     // let cfg_node = ctx.cfg_node;
     let killed_rel = ctx.killed;
-    
+
 
     // Create a new iteration context, ...
     let mut iteration = Iteration::new();
@@ -968,7 +997,7 @@ fn compute<T: FactTypes>(
 
     // let subset_placeholder = subset_placeholder.complete();
     // println!("subset_placeholder: {}", subset_placeholder.len());
-    
+
 
     // the new tuples are
     // - the number of new subsets (subsets at the end of the computation minus the initial value)

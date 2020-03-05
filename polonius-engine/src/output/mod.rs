@@ -168,7 +168,7 @@ impl<T: FactTypes> Output<T> {
         let mut result = Output::new(dump_enabled);
 
         if let Algorithm::Blocky = algorithm {
-            blocky::blockify_my_love(all_facts.clone(), unterner.expect("wtf"), &mut result);
+            blocky::blockify_my_love(all_facts.clone(), unterner.expect("we need an unterner"), &mut result);
             return result;
         }
 

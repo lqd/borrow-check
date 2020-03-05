@@ -131,7 +131,7 @@ pub(super) fn compute<T: FactTypes>(
     let potential_errors = potential_errors.complete();
     let potential_subset_errors = potential_subset_errors.complete();
 
-    // TMP
+    // TMP: the error location is meaningless for a location-insensitive subset error analysis
     for &(origin1, origin2) in potential_subset_errors.iter() {
         result
             .subset_errors
