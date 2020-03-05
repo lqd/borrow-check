@@ -76,105 +76,105 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         known_subset.len()
     );
 
-    // The set of "interesting" loans
-    let interesting_loan: FxHashSet<_> = facts
-        .invalidates
-        .iter()
-        .map(|&(_point, loan)| loan)
-        .collect();
-    println!("interesting_loan: {}", interesting_loan.len());
+    // // The set of "interesting" loans
+    // let interesting_loan: FxHashSet<_> = facts
+    //     .invalidates
+    //     .iter()
+    //     .map(|&(_point, loan)| loan)
+    //     .collect();
+    // println!("interesting_loan: {}", interesting_loan.len());
 
-    // The "interesting" borrow regions are the ones referring to loans for which an error could occur
-    let interesting_borrow_region: FxHashSet<_> = facts
-        .borrow_region
-        .iter()
-        .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
-        .copied()
-        .collect();
+    // // The "interesting" borrow regions are the ones referring to loans for which an error could occur
+    // let interesting_borrow_region: FxHashSet<_> = facts
+    //     .borrow_region
+    //     .iter()
+    //     .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
+    //     .copied()
+    //     .collect();
 
-    // The interesting origins are:
-    // - for illegal access errors: any origin into which an interesting loan could flow.
-    // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
-    //   be tightened further to some of the placeholders which are _not_ in the
-    //   `known_subset` relation: they are the only ones into which an unexpected placeholder
-    //   loan can flow)
-    let (interesting_origin, interesting_placeholder) = {
-        let mut iteration = Iteration::new();
+    // // The interesting origins are:
+    // // - for illegal access errors: any origin into which an interesting loan could flow.
+    // // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
+    // //   be tightened further to some of the placeholders which are _not_ in the
+    // //   `known_subset` relation: they are the only ones into which an unexpected placeholder
+    // //   loan can flow)
+    // let (interesting_origin, interesting_placeholder) = {
+    //     let mut iteration = Iteration::new();
 
-        let outlives_o1 = Relation::from_iter(
-            facts
-                .outlives
-                .iter()
-                .map(|&(origin1, origin2, _point)| (origin1, origin2)),
-        );
+    //     let outlives_o1 = Relation::from_iter(
+    //         facts
+    //             .outlives
+    //             .iter()
+    //             .map(|&(origin1, origin2, _point)| (origin1, origin2)),
+    //     );
 
-        let interesting_origin = iteration.variable::<(T::Origin, ())>("interesting_origin");
-        let placeholder_origin_step1 =
-            iteration.variable::<((T::Origin, T::Origin), ())>("placeholder_origin_step1");
-        let placeholder_origin = iteration.variable::<(T::Origin, ())>("placeholder_origin");
+    //     let interesting_origin = iteration.variable::<(T::Origin, ())>("interesting_origin");
+    //     let placeholder_origin_step1 =
+    //         iteration.variable::<((T::Origin, T::Origin), ())>("placeholder_origin_step1");
+    //     let placeholder_origin = iteration.variable::<(T::Origin, ())>("placeholder_origin");
 
-        // interesting_origin(Origin) :-
-        //   interesting_borrow_region(Origin, _, _);
-        interesting_origin.extend(
-            interesting_borrow_region
-                .iter()
-                .map(|&(origin, _loan, _point)| (origin, ())),
-        );
+    //     // interesting_origin(Origin) :-
+    //     //   interesting_borrow_region(Origin, _, _);
+    //     interesting_origin.extend(
+    //         interesting_borrow_region
+    //             .iter()
+    //             .map(|&(origin, _loan, _point)| (origin, ())),
+    //     );
 
-        // interesting_origin(Origin) :-
-        //   placeholder(Origin, _);
-        interesting_origin.extend(
-            facts
-                .placeholder
-                .iter()
-                .map(|&(origin, _loan)| (origin, ())),
-        );
-        placeholder_origin.extend(
-            facts
-                .placeholder
-                .iter()
-                .map(|&(origin, _loan)| (origin, ())),
-        );
+    //     // interesting_origin(Origin) :-
+    //     //   placeholder(Origin, _);
+    //     interesting_origin.extend(
+    //         facts
+    //             .placeholder
+    //             .iter()
+    //             .map(|&(origin, _loan)| (origin, ())),
+    //     );
+    //     placeholder_origin.extend(
+    //         facts
+    //             .placeholder
+    //             .iter()
+    //             .map(|&(origin, _loan)| (origin, ())),
+    //     );
 
-        while iteration.changed() {
-            // interesting_origin(Origin2) :-
-            //   outlives(Origin1, Origin2, _),
-            //   interesting_origin(Origin1, _, _);
-            interesting_origin.from_join(
-                &interesting_origin,
-                &outlives_o1,
-                |_origin1, (), &origin2| (origin2, ()),
-            );
+    //     while iteration.changed() {
+    //         // interesting_origin(Origin2) :-
+    //         //   outlives(Origin1, Origin2, _),
+    //         //   interesting_origin(Origin1, _, _);
+    //         interesting_origin.from_join(
+    //             &interesting_origin,
+    //             &outlives_o1,
+    //             |_origin1, (), &origin2| (origin2, ()),
+    //         );
 
-            // placeholder_origin(Origin2) :-
-            //   placeholder_origin(Origin1, _, _),
-            //   outlives(Origin1, Origin2, _),
-            //   !known_subset(Origin1, Origin2);
-            placeholder_origin_step1.from_join(
-                &placeholder_origin,
-                &outlives_o1,
-                |&origin1, (), &origin2| ((origin1, origin2), ()),
-            );
-            placeholder_origin.from_antijoin(
-                &placeholder_origin_step1,
-                &known_subset,
-                |&(_origin1, origin2), ()| (origin2, ()),
-            );
-        }
+    //         // placeholder_origin(Origin2) :-
+    //         //   placeholder_origin(Origin1, _, _),
+    //         //   outlives(Origin1, Origin2, _),
+    //         //   !known_subset(Origin1, Origin2);
+    //         placeholder_origin_step1.from_join(
+    //             &placeholder_origin,
+    //             &outlives_o1,
+    //             |&origin1, (), &origin2| ((origin1, origin2), ()),
+    //         );
+    //         placeholder_origin.from_antijoin(
+    //             &placeholder_origin_step1,
+    //             &known_subset,
+    //             |&(_origin1, origin2), ()| (origin2, ()),
+    //         );
+    //     }
 
-        (
-            interesting_origin
-                .complete()
-                .iter()
-                .map(|&(origin1, _)| origin1)
-                .collect::<FxHashSet<_>>(),
-            placeholder_origin
-                .complete()
-                .iter()
-                .map(|&(origin1, _)| origin1)
-                .collect::<FxHashSet<_>>()
-        )
-    };
+    //     (
+    //         interesting_origin
+    //             .complete()
+    //             .iter()
+    //             .map(|&(origin1, _)| origin1)
+    //             .collect::<FxHashSet<_>>(),
+    //         placeholder_origin
+    //             .complete()
+    //             .iter()
+    //             .map(|&(origin1, _)| origin1)
+    //             .collect::<FxHashSet<_>>()
+    //     )
+    // };
 
     // println!("interesting_origin: {}", interesting_origin.len());
     // println!("interesting_placeholder: {}", interesting_placeholder.len());
@@ -206,9 +206,9 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         // println!("borrow_region {:?} is from {} block {}", fact, point, block_idx);
 
         // interestingness filter
-        if !interesting_borrow_region.contains(&fact) {
-            continue;
-        }
+        // if !interesting_borrow_region.contains(&fact) {
+        //     continue;
+        // }
 
         xxx += 1;
 
@@ -288,9 +288,9 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         // println!("outlives {:?} is from {} block {}", fact, point, block_idx);
 
         // interestingness filter
-        if !interesting_origin.contains(&fact.0) && !interesting_placeholder.contains(&fact.0) {
-            continue;
-        }
+        // if !interesting_origin.contains(&fact.0) && !interesting_placeholder.contains(&fact.0) {
+        //     continue;
+        // }
 
         xxx += 1;
 
@@ -331,9 +331,9 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
         let (_point, block_idx) = block_from_point(fact.1);
 
         // Interestingness filter (should be uplifted to liveness itself as usual, this is just a test)
-        if !interesting_origin.contains(&fact.0) {
-            continue;
-        }
+        // if !interesting_origin.contains(&fact.0) {
+        //     continue;
+        // }
 
         xxx += 1;
 
@@ -935,7 +935,7 @@ fn compute<T: FactTypes>(
 
         // subset_placeholder(Origin1, Origin2, Point) :-
         //     subset(Origin1, Origin2, Point),
-        //     placeholder_region(Origin1).
+        //     placeholder_origin(Origin1).
         subset_placeholder.from_leapjoin(
             &subset,
             (
@@ -957,10 +957,10 @@ fn compute<T: FactTypes>(
             |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point)
         );
 
-        // subset_error(R1, R2, P) :-
-        //     subset_placeholder(R1, R2, P),
-        //     placeholder_region(R2),
-        //     !known_subset(R1, R2).
+        // subset_error(Origin1, Origin2, Point) :-
+        //     subset_placeholder(Origin1, Origin2, Point),
+        //     placeholder_origin(Origin2),
+        //     !known_subset(Origin1, Origin2).
         subset_errors.from_leapjoin(
             &subset_placeholder,
             (
