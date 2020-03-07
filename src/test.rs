@@ -1,13 +1,13 @@
 #![cfg(test)]
 
 use crate::dump::Output;
-use crate::facts::{AllFacts, LocalFacts, Loan, Origin, Point};
+use crate::facts::{AllFacts, Loan, LocalFacts, Origin, Point};
 use crate::intern;
 use crate::program::parse_from_program;
 use crate::tab_delim;
 use crate::test_util::{assert_equal, check_program};
-use polonius_engine::Algorithm;
 use polonius_engine::output::Unterner;
+use polonius_engine::Algorithm;
 use rustc_hash::FxHashMap;
 use std::error::Error;
 use std::path::Path;
@@ -17,7 +17,12 @@ fn test_facts(all_facts: &AllFacts, algorithms: &[Algorithm], unterner: &dyn Unt
 
     // Check that the "naive errors" are a subset of the "insensitive
     // ones".
-    let insensitive = Output::compute(all_facts, Algorithm::LocationInsensitive, false, Some(unterner));
+    let insensitive = Output::compute(
+        all_facts,
+        Algorithm::LocationInsensitive,
+        false,
+        Some(unterner),
+    );
     for (naive_point, naive_loans) in &naive.errors {
         match insensitive.errors.get(&naive_point) {
             Some(insensitive_loans) => {
@@ -272,7 +277,8 @@ fn smoke_test_errors() {
         let tables = &mut intern::InternerTables::new();
         let facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir).expect("facts");
 
-        let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, true, Some(tables));
+        let location_insensitive =
+            Output::compute(&facts, Algorithm::LocationInsensitive, true, Some(tables));
         assert!(
             !location_insensitive.errors.is_empty(),
             format!("LocationInsensitive didn't find errors for '{}'", test_fn)
@@ -627,7 +633,11 @@ fn transitive_illegal_subset_error() {
 
 #[test]
 fn successes_in_subset_relations_dataset() {
-    let successes = ["valid_subset", "implied_bounds_subset", "valid_transitive_subsets"];
+    let successes = [
+        "valid_subset",
+        "implied_bounds_subset",
+        "valid_transitive_subsets",
+    ];
 
     // these tests have no illegal access errors or subset errors
     for test_fn in &successes {
@@ -689,13 +699,14 @@ fn errors_in_subset_relations_dataset2() {
 
     // this function has no illegal access errors, but 3 subset errors over 15 points
 
-    // TODO: collect the origins at all these points to validate them 
+    // TODO: collect the origins at all these points to validate them
 
     let naive = Output::compute(&facts, Algorithm::Naive, false, None);
     assert!(naive.errors.is_empty());
     assert_eq!(naive.subset_errors.len(), 15);
 
-    let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, false, Some(tables));
+    let location_insensitive =
+        Output::compute(&facts, Algorithm::LocationInsensitive, false, Some(tables));
     assert!(location_insensitive.errors.is_empty());
     assert_eq!(location_insensitive.subset_errors[&0.into()].len(), 3); // tmp meaningless location: the first point
 

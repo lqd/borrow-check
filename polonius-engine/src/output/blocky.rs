@@ -1,12 +1,11 @@
 use datafrog::{Iteration, Relation, RelationLeaper};
 use std::time::Instant;
 
-use crate::FactTypes;
 use crate::output::Output;
+use crate::FactTypes;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 // use std::collections::BTreeSet;
-
 
 /// Subset of `AllFacts` dedicated to borrow checking, and data ready to use by the variants
 struct BlockyContext<'ctx, T: FactTypes> {
@@ -43,7 +42,11 @@ struct BlockyResult<T: FactTypes> {
     pub new_tuples: usize,
 }
 
-pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn super::Unterner<T>, mut output: &mut Output<T>) {
+pub fn blockify_my_love<T: FactTypes>(
+    facts: crate::AllFacts<T>,
+    unterner: &dyn super::Unterner<T>,
+    mut output: &mut Output<T>,
+) {
     // function data
     // note: the `known_subset` relation in the facts does not necessarily contain its whole transitive closure,
     // so compute it.
@@ -219,13 +222,18 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
     }
 
     // println!("block_borrow_region done");
-    println!("block_borrow_region done, {} / {}", xxx, facts.borrow_region.len());
+    println!(
+        "block_borrow_region done, {} / {}",
+        xxx,
+        facts.borrow_region.len()
+    );
 
     // facts.universal_region has no points
 
     let mut block_cfg_edge: FxHashMap<usize, FxHashSet<(T::Point, T::Point)>> = Default::default();
 
-    let mut block_terminator_predecessor: FxHashMap<T::Point, FxHashSet<usize>> = Default::default();
+    let mut block_terminator_predecessor: FxHashMap<T::Point, FxHashSet<usize>> =
+        Default::default();
     let mut block_terminator_successor: FxHashMap<T::Point, FxHashSet<usize>> = Default::default();
 
     let mut block_successor: FxHashMap<usize, FxHashSet<usize>> = Default::default();
@@ -300,7 +308,8 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
     // println!("block_outlives done");
     println!("block_outlives done: {} / {}", xxx, facts.outlives.len());
 
-    let mut block_invalidates: FxHashMap<usize, FxHashSet<(T::Point, T::Loan)>> = Default::default();
+    let mut block_invalidates: FxHashMap<usize, FxHashSet<(T::Point, T::Loan)>> =
+        Default::default();
     for fact in facts.invalidates.iter() {
         let (_point, block_idx) = block_from_point(fact.0);
         // println!("invalidates {:?} is from {} block {}", fact, _point, block_idx);
@@ -314,17 +323,13 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
     println!("block_invalidates done: {}", facts.invalidates.len());
 
     // function data
-    let (
-        _known_contains,
-        placeholder_origin,
-        _placeholder_loan,
-        region_live_at,
-        universal_regions,
-    ) = create_function_data(facts, &mut output);
+    let (_known_contains, placeholder_origin, _placeholder_loan, region_live_at, universal_regions) =
+        create_function_data(facts, &mut output);
     println!("function data computed");
 
     // liveness block data
-    let mut block_region_live_at: FxHashMap<usize, FxHashSet<(T::Origin, T::Point)>> = Default::default();
+    let mut block_region_live_at: FxHashMap<usize, FxHashSet<(T::Origin, T::Point)>> =
+        Default::default();
     let mut xxx = 0;
     let yyy = region_live_at.len();
     for fact in region_live_at.into_iter() {
@@ -494,7 +499,6 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
             placeholder_origin: &placeholder_origin,
             // placeholder_loan: &placeholder_loan,
             // known_contains: &known_contains,
-
             cfg_edge: &bb_facts.cfg_edge,
             region_live_at: &bb_facts.region_live_at,
             borrow_region: &bb_facts.borrow_region,
@@ -599,14 +603,14 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
                             let (_, local_block_idx) = block_from_point(fact.2);
                             local_block_idx == successor_block_idx
                         }));
-                        
+
                     // for fact in result.requires.iter() {
                     //     let (_point, local_block_idx) = block_from_point(fact.2);
                     //     if local_block_idx == successor_block_idx {
                     //         println!("merging 'requires' {:?} at {} from block {}, with block {}", fact, _point, block_idx, successor_block_idx);
                     //     }
                     // }
-                    
+
                     successor_facts
                         .borrow_region
                         .extend(result.requires.iter().filter(|fact| {
@@ -619,7 +623,8 @@ pub fn blockify_my_love<T: FactTypes>(facts: crate::AllFacts<T>, unterner: &dyn 
                     // the successor block.
 
                     let new_outlives_facts = successor_facts.outlives.len() != successor_outlives;
-                    let new_borrow_region_facts = successor_facts.borrow_region.len() != successor_borrow_regions;
+                    let new_borrow_region_facts =
+                        successor_facts.borrow_region.len() != successor_borrow_regions;
                     let is_successor_dirty = new_outlives_facts || new_borrow_region_facts;
 
                     // if successor_block_idx == 2139 {
@@ -744,7 +749,6 @@ fn compute<T: FactTypes>(
     // let cfg_node = ctx.cfg_node;
     let killed_rel = ctx.killed;
 
-
     // Create a new iteration context, ...
     let mut iteration = Iteration::new();
 
@@ -765,14 +769,14 @@ fn compute<T: FactTypes>(
 
     // we need `region_live_at` in both variable and relation forms.
     // (respectively, for the regular join and the leapjoin).
-    let region_live_at_var =
-        iteration.variable::<((T::Origin, T::Point), ())>("region_live_at");
+    let region_live_at_var = iteration.variable::<((T::Origin, T::Point), ())>("region_live_at");
 
     // output relations: illegal accesses errors, and illegal subset relations errors
     let errors = iteration.variable("errors");
     let subset_errors = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_errors");
 
-    let subset_placeholder = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_placeholder");
+    let subset_placeholder =
+        iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_placeholder");
     let subset_placeholder_o2p = iteration.variable_indistinct("subset_placeholder_o2p");
 
     // load initial facts.
@@ -941,11 +945,9 @@ fn compute<T: FactTypes>(
             (
                 placeholder_origin.extend_with(|&(origin1, _origin2, _point)| origin1),
                 // remove symmetries:
-                datafrog::ValueFilter::from(|&(origin1, origin2, _point), ()| {
-                    origin2 != origin1
-                }),
+                datafrog::ValueFilter::from(|&(origin1, origin2, _point), ()| origin2 != origin1),
             ),
-            |&(origin1, origin2, point), _| (origin1, origin2, point)
+            |&(origin1, origin2, point), _| (origin1, origin2, point),
         );
 
         // subset_placeholder(Origin1, Origin3, Point) :-
@@ -954,7 +956,7 @@ fn compute<T: FactTypes>(
         subset_placeholder.from_join(
             &subset_placeholder_o2p,
             &subset_o1p,
-            |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point)
+            |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point),
         );
 
         // subset_error(Origin1, Origin2, Point) :-
@@ -967,9 +969,7 @@ fn compute<T: FactTypes>(
                 placeholder_origin.extend_with(|&(_origin1, origin2, _point)| origin2),
                 known_subset.filter_anti(|&(origin1, origin2, _point)| (origin1, origin2)),
                 // remove symmetries:
-                datafrog::ValueFilter::from(|&(origin1, origin2, _point), ()| {
-                    origin2 != origin1
-                }),
+                datafrog::ValueFilter::from(|&(origin1, origin2, _point), ()| origin2 != origin1),
             ),
             |&(origin1, origin2, point), _| (origin1, origin2, point),
         );
@@ -998,12 +998,10 @@ fn compute<T: FactTypes>(
     // let subset_placeholder = subset_placeholder.complete();
     // println!("subset_placeholder: {}", subset_placeholder.len());
 
-
     // the new tuples are
     // - the number of new subsets (subsets at the end of the computation minus the initial value)
     // - the number of new requires (requires at the end of the computation minus the initial value)
-    let new_tuples = subset.len() - ctx.outlives.len()
-        + requires.len() - ctx.borrow_region.len();
+    let new_tuples = subset.len() - ctx.outlives.len() + requires.len() - ctx.borrow_region.len();
 
     // TODO: enlever les placeholder loans ? ils sont dans require mais ne doivent pas compter comme des nouveaux tuples
     // assert!(placeholder_loans_count == 0);

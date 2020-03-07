@@ -131,7 +131,8 @@ pub(super) fn compute<T: FactTypes>(
 
         let subset_errors = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_errors");
 
-        let subset_placeholder = iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_placeholder");
+        let subset_placeholder =
+            iteration.variable::<(T::Origin, T::Origin, T::Point)>("subset_placeholder");
         let subset_placeholder_o2p = iteration.variable_indistinct("subset_placeholder_o2p");
 
         // Make "variable" versions of the relations, needed for joins.
@@ -402,7 +403,7 @@ pub(super) fn compute<T: FactTypes>(
                         origin2 != origin1
                     }),
                 ),
-                |&((origin1, point), origin2), _| (origin1, origin2, point)
+                |&((origin1, point), origin2), _| (origin1, origin2, point),
             );
 
             // subset_placeholder(Origin1, Origin3, Point) :-
@@ -411,7 +412,7 @@ pub(super) fn compute<T: FactTypes>(
             subset_placeholder.from_join(
                 &subset_placeholder_o2p,
                 &subset_o1p,
-                |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point)
+                |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point),
             );
 
             // subset_error(Origin1, Origin2, Point) :-

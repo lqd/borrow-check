@@ -164,11 +164,20 @@ impl<T: FactTypes> Output<T> {
     /// - in cases where `LocationInsensitive` variant is ran as a filtering pre-pass,
     ///   partial results can also be stored in the context, so that the following
     ///   variant can use it to prune its own input data
-    pub fn compute(all_facts: &AllFacts<T>, algorithm: Algorithm, dump_enabled: bool, unterner: Option<&dyn Unterner<T>>) -> Self {
+    pub fn compute(
+        all_facts: &AllFacts<T>,
+        algorithm: Algorithm,
+        dump_enabled: bool,
+        unterner: Option<&dyn Unterner<T>>,
+    ) -> Self {
         let mut result = Output::new(dump_enabled);
 
         if let Algorithm::Blocky = algorithm {
-            blocky::blockify_my_love(all_facts.clone(), unterner.expect("we need an unterner"), &mut result);
+            blocky::blockify_my_love(
+                all_facts.clone(),
+                unterner.expect("we need an unterner"),
+                &mut result,
+            );
             return result;
         }
 
