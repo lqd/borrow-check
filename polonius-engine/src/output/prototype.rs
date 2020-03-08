@@ -119,7 +119,7 @@ pub(super) fn compute<Origin: Atom, Loan: Atom, Point: Atom, Variable: Atom, Mov
         let subset_o1p = iteration.variable::<((Origin, Point), Origin)>("subset_o1p");
 
         // Note: `subset_o2o1p` is an indexed version of the `subset` relation
-        let subset_o2o1p = iteration.variable::<(((Origin, Origin, Point)), ())>("subset_o2o1p");
+        let subset_o2o1p = iteration.variable::<((Origin, Origin, Point), ())>("subset_o2o1p");
 
         // Note: `subset_o2p` is an indexed version of the `subset` relation
         let subset_o2p = iteration.variable::<((Origin, Point), Origin)>("subset_o2p");
