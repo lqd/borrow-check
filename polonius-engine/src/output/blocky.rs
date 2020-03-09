@@ -424,10 +424,26 @@ pub fn blockify_my_love<T: FactTypes>(
             Some(successor) => successor,
         };
 
+        let (_x, block_x_idx) = block_from_point(p);
+        let (_y, block_y_idx) = block_from_point(q);
+        
+        use facts::Atom;
+        if block_x_idx == 0 && p.index() == 1316 {
+            println!("point p: {} - predecessors: {:?}", _x, predecessors.get(&p));
+        }
+
+        if block_y_idx == 0 && q.index() == 1316 {
+            println!("point q: {} - predecessors: {:?}", _y, predecessors.get(&q));
+        }
+
+        if block_x_idx != block_y_idx {
+            continue; // no inter-block compression
+        }
+
         // Compressible points have only one incoming edge, and as the the point `p` is merged
         // into its parent's edge, the root edge can't be contracted.
         match predecessors.get(&q) {
-            None => continue,       // root node
+            None => {  println!("point {:?} is the root", q); continue },       // root node
             Some(None) => continue, // more than one predecessor
             Some(Some(_)) => {}
         }
@@ -461,9 +477,9 @@ pub fn blockify_my_love<T: FactTypes>(
             continue;
         }
 
-        if xinvalidates.get(&p) != xinvalidates.get(&q) {
-            continue;
-        }
+        // if xinvalidates.get(&p) != xinvalidates.get(&q) {
+        //     continue;
+        // }
 
         // let a = xinvalidates.get(&p);
         // let b = xinvalidates.get(&q);
@@ -477,6 +493,10 @@ pub fn blockify_my_love<T: FactTypes>(
         // could be done to see whether there is more compression and filtering opportunities
         // there: the important points will contribute to liveness while not being error
         // sources.
+
+        if block_x_idx + block_y_idx == 0 {
+            println!("point {} is compressible", _x);
+        }
 
         compressible_edges.push((p, q));
         compressed_points.insert(p);
