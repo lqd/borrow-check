@@ -42,10 +42,429 @@ struct BlockyResult<T: FactTypes> {
     pub new_tuples: usize,
 }
 
+fn compress_facts<T: FactTypes>(
+    mut facts: crate::AllFacts<T>,
+    unterner: &dyn super::Unterner<T>,
+    mut output: &mut Output<T>,
+) -> (
+    crate::AllFacts<T>,
+    Relation<(T::Origin, T::Loan)>,
+    Relation<(T::Origin, ())>,
+    Relation<(T::Loan, T::Origin)>,
+    Vec<(T::Origin, T::Point)>,
+    Vec<T::Origin>,
+) {
+    // Step 1 - Index the CFG to find the eligible points matching the requirements,
+    // and make the sets of live regions at each point easily comparable.
+    let mut successors = FxHashMap::default();
+    let mut predecessors = FxHashMap::default();
+
+    let block_from_point = |point| {
+        let point = unterner.untern_point(point);
+
+        // point naming pattern:
+        // - "Mid(bb0[12])" from rustc generated facts,
+        // - "Mid(B0[12])" from polonius unit tests
+
+        let point_type_separator = point.find('(').unwrap();
+        let point_block_separator = point.find('[').unwrap();
+
+        let block = &point[point_type_separator + 1..point_block_separator];
+
+        let block_idx_pos = block.chars().position(|c| c.is_numeric()).unwrap();
+        let block_idx = &block[block_idx_pos..];
+        (point, block_idx.parse::<usize>().unwrap())
+    };
+
+    use std::collections::hash_map::Entry;
+
+    let xxxx_edge_count = facts.cfg_edge.len();
+
+    for &(p, q) in &facts.cfg_edge {
+        match successors.entry(p) {
+            Entry::Vacant(entry) => {
+                entry.insert(Some(q));
+            }
+            Entry::Occupied(mut entry) => {
+                let successor = entry.get_mut();
+                if successor.is_some() {
+                    // There is already a successor: this point can't be compressed
+                    *successor = None;
+                }
+            }
+        }
+
+        match predecessors.entry(q) {
+            Entry::Vacant(entry) => {
+                entry.insert(Some(p));
+            }
+
+            Entry::Occupied(mut entry) => {
+                let predecessor = entry.get_mut();
+                if predecessor.is_some() {
+                    // There is already a predecessor: this point can't be compressed
+                    *predecessor = None;
+                }
+            }
+        }
+    }
+
+    let mut xoutlives = FxHashMap::default();
+    for (o1, o2, p) in &facts.outlives {
+        xoutlives
+            .entry(*p)
+            .or_insert_with(FxHashSet::default)
+            .insert((*o1, *o2));
+    }
+
+    let mut xkilled = FxHashMap::default();
+    for &(l, p) in &facts.killed {
+        xkilled
+            .entry(p)
+            .or_insert_with(FxHashSet::default)
+            .insert(l);
+    }
+
+    let mut xinvalidates = FxHashMap::default();
+    for &(p, l) in &facts.invalidates {
+        xinvalidates
+            .entry(p)
+            .or_insert_with(FxHashSet::default)
+            .insert(l);
+    }
+
+    // function data, cloned AF
+    let (
+        _known_contains, 
+        placeholder_origin, 
+        _placeholder_loan, 
+        mut region_live_at, 
+        universal_regions) =
+        create_function_data(facts.clone(), &mut output);
+     // tmp facts clone to allow for more easy random access to facts
+    println!("function data computed");
+
+    let mut xregion_live_at = FxHashMap::default();
+    for &(r, p) in &region_live_at {
+        xregion_live_at
+            .entry(p)
+            .or_insert_with(FxHashSet::default)
+            .insert(r);
+    }
+
+    // Step 2 - Locate eligible points
+    let mut compressed_points = FxHashSet::default();
+    let mut compressible_edges = Vec::new();
+
+    for (p, q) in successors.into_iter() {
+        // Compressible points have only one outgoing edge.
+        //
+        // Note: it could be interesting to investigate the impact of contracting acceptable
+        // children edges into `p`'s parent : in the graph `(a, b), (b, c), (b, d)`
+        // contracting `b` away would require additional constraints between `c`, `d` and `a`.
+        // However, in early tests of our datasets, the number of cases where all children edges
+        // had the same set of live regions as their parent seemed small (e.g for clap, for 49K total
+        // points: 3275 points had more than one child node, with 231 having the same live regions).
+        // There might be rules specific to multiple-children cases but they probably aren't the same as the
+        // single-child node cases implemented here.
+
+        let q = match q {
+            None => continue, // more than one successor
+            Some(successor) => successor,
+        };
+
+        let (_x, block_x_idx) = block_from_point(p);
+        let (_y, block_y_idx) = block_from_point(q);
+
+        use facts::Atom;
+        if block_x_idx == 0 && p.index() == 1316 {
+            println!(
+                "root at point p: {} - predecessors: {:?}",
+                _x,
+                predecessors.get(&p)
+            );
+        }
+
+        if block_y_idx == 0 && q.index() == 1316 {
+            println!(
+                "root at point q: {} - predecessors: {:?}",
+                _y,
+                predecessors.get(&q)
+            );
+        }
+
+        // Compression works the same per-block or on the whole CFG. However, contracting
+        // the outgoing edges can end up in being linked to a point in a successor block which
+        // is not the regular entry point of the block. So contraction requires connected blocks
+        // to have been processed. For now, let's try to limit the existing working whole-CFG compression
+        // to blocks themselves, and "blockify" the compression and contraction.
+        // if block_x_idx != block_y_idx {
+        //     continue;
+        // }
+
+        // Compressible points have only one incoming edge, and as the the point `p` is merged
+        // into its parent's edge, the root edge can't be contracted.
+        match predecessors.get(&q) {
+            None => {
+                println!("point {:?} is the root", q);
+                continue;
+            } // root node
+            // ^^^^ probably never happens, if we're looking at an edge p -> q, q has to have a predecessor
+            // and p could be the root. If we don't want to contract the root node, we can't do it like this.
+            // Does the root node really need to be preserved ? Especially with the start/mid separation,
+            // it's likely it will have no contribution liveness or subsets (come up with a word to talk about the
+            // things that are important to subsets, while liveness is mostly important to propagation through the CFG
+            // rather than being about origins flowing into each oter)
+            Some(None) => continue, // more than one predecessor
+            Some(Some(_)) => {}
+        }
+
+        // Compressible points have the same live regions.
+        if xregion_live_at.get(&p) != xregion_live_at.get(&q) {
+            continue;
+        }
+
+        // let a = xoutlives.get(&p);
+        // let b = xoutlives.get(&q);
+        // match (a, b) {
+        //     (Some(x), _) if !x.is_empty() => continue,
+        //     (_, Some(x)) if !x.is_empty() => continue,
+        //     _ => {}
+        // }
+
+        if xoutlives.get(&p) != xoutlives.get(&q) {
+            continue;
+        }
+
+        // let a = xkilled.get(&p);
+        // let b = xkilled.get(&q);
+        // match (a, b) {
+        //     (Some(x), _) if !x.is_empty() => continue,
+        //     (_, Some(x)) if !x.is_empty() => continue,
+        //     _ => {}
+        // }
+
+        if xkilled.get(&p) != xkilled.get(&q) {
+            continue;
+        }
+
+        // if xinvalidates.get(&p) != xinvalidates.get(&q) {
+        //     continue;
+        // }
+
+        let a = xinvalidates.get(&p);
+        let b = xinvalidates.get(&q);
+        match (a, b) {
+            (Some(x), _) if !x.is_empty() => continue,
+            (_, Some(x)) if !x.is_empty() => continue,
+            _ => {}
+        }
+
+        // Note: as only `invalidates` points can be the source of errors, more investigation
+        // could be done to see whether there is more compression and filtering opportunities
+        // there: the important points will contribute to liveness while not being error
+        // sources.
+
+        if block_x_idx + block_y_idx == 0 {
+            println!("point {} is compressible", _x);
+        }
+
+        compressible_edges.push((p, q));
+        compressed_points.insert(p);
+    }
+
+    println!(
+        "compressible_edges: {} / {}",
+        compressible_edges.len(),
+        xxxx_edge_count
+    );
+    println!("compressed points: {}", compressed_points.len());
+
+    // ceci est une vérification simple qu'il faut surement asserter qq part, mais est vraie/importante:
+    // les borrow_region ne sont jamais à un point compressible, seulement parce que la compression
+    // actuellement vérifie l'égalité des origins live sur l'edge. une nouvelle borrow region va
+    // normalement devenir live au point suivant, marquant l'edge non-compressible.
+    for fact in facts.borrow_region.iter() {
+        let (point, _block_idx) = block_from_point(fact.2);
+        if compressed_points.contains(&fact.2) {
+            panic!(
+                "borrow region {} at {} is at a compressed point",
+                unterner.untern_origin(fact.0),
+                point
+            );
+        }
+    }
+
+    // The following is partially unneeded, the computation to propagate points to their destination
+    // is necessary, but the specific data linking each contracted node to its destination, in order to
+    // decompress the data is not needed if one only compresses points which are irrelevant:
+    // in the following we assume we needed the complete borrow_live_at relation, and if a loan was live
+    // at a left-over point it was also live for all the points contracted away into it.
+    // However, only those points where errors can occur are important here. If we don't compress invalidates
+    // points, no information about the filtered points will be ever needed. It's also used in contraction
+    // Bref, à nettoyer.
+    //
+    // OLD:
+    // Step 3 - Compute the CFG compression
+    // - Propagate the previously located points along compressed edges until reaching the
+    //   important point at the end of the chain.
+    // - Record these vertex contractions in an equivalence table: the edges from compressed
+    //   points to non-compressed points necessary to decompress the live borrows which could
+    //   be computed at these important points.
+    let equivalence_table = {
+        let mut iteration = Iteration::new();
+
+        let compression_table = iteration.variable("compression_table");
+        let compressed_edge = iteration.variable_indistinct("compressed_edge");
+
+        let compressed_point = Relation::from_iter(compressed_points.iter().cloned());
+
+        let propagated_edge_q = iteration.variable("propagated_edge_q");
+        propagated_edge_q.insert(Relation::from_iter(
+            compressible_edges.iter().map(|&(p, q)| (q, p)),
+        ));
+
+        compressed_edge.insert(compressible_edges.into());
+
+        while iteration.changed() {
+            // propagated_edge(P, Q) :- compressed_edge(P, Q);
+            // -> already done at loading time for a static input
+
+            // propagated_edge(P, R) :-
+            //     propagated_edge(P, Q),
+            //     compressed_edge(Q, R).
+            propagated_edge_q.from_join(&propagated_edge_q, &compressed_edge, |&_q, &p, &r| (r, p));
+
+            // compression_table(P, Q) :-
+            //     propagated_edge(P, Q),
+            //     !compressed_point(Q).
+            compression_table.from_antijoin(&propagated_edge_q, &compressed_point, |&q, &p| (p, q));
+        }
+
+        let mut equivalence_table = FxHashMap::default();
+        for &(p, q) in compression_table.complete().iter() {
+            equivalence_table.insert(p, q);
+        }
+
+        equivalence_table
+    };
+
+    let yycfg_edge = &mut facts.cfg_edge;
+
+    for fact in yycfg_edge.iter() {
+        let (_point_from, block_from_idx) = block_from_point(fact.0);
+        let (_point_to, block_to_idx) = block_from_point(fact.1);
+        if block_from_idx == 0 || block_to_idx == 0 {
+            println!(
+                "A - yycfg_edge {:?} is from {} block {}, to {} block {}",
+                fact, _point_from, block_from_idx, _point_to, block_to_idx
+            );
+        }
+    }
+
+    // Step 4 - Contract the CFG according to the edges' contribution to `subset`s:
+    // 1) edges between important points: keep them as-is, they contribute to `subset`s
+    // 2) edges from compressible points: contract them away, they don't contribute to
+    //   `subset`s.
+    // 3) edges from an important point to a compressible point: propagated from the source to
+    //    its eventual destination (an important point), potentially through a chain of compressible
+    //    points.
+    //    For example, e1: (p, q), e2 (q, r), e3 (r, s) where `q` and `r` are compressible, and
+    //    `q`, `r`, and `s` have equivalent contributions to `subset`s.
+    //    - e2 and e3 will be removed by rule #2.
+    //    - we keep the same liveness differences by connecting the source and destination
+    //      of the chain: (p, s)
+    //
+    for i in (0..yycfg_edge.len()).rev() {
+        let (p, q) = yycfg_edge[i];
+        let (_point_from, a) = block_from_point(p);
+        let (_point_to, b) = block_from_point(q);
+
+        // As before, we should try to limit process to be within a single block.
+        // This means some compressible points could be ignored for now, Particularly
+        // the highly compressible block entry point.
+        // Depending on how/when compression is done, it will have different tradeoffs:
+        // if it can be done on-demand, eg after a predecessor block has been analyzed,
+        // the requires/subsets in the results will reference this entry point which could
+        // be compressed away. Maybe block-based compression should be contracting the p points of (p, q)
+        // edges, whereas right now q is contracted. This will move up the successors closer to the start
+        // point, and keep it always present, rather than the opposite of removing all useless points in
+        // the block-cfg until one interesting is found.
+
+        if compressed_points.contains(&p) {
+            if a == 0 || b == 0 {
+                println!(
+                    "removing edge {} -> {} as {} was compressed away",
+                    _point_from, _point_to, _point_from
+                );
+            }
+            yycfg_edge.swap_remove(i);
+        } else {
+            if compressed_points.contains(&q) {
+                if a == 0 || b == 0 {
+                    let (to, _) = block_from_point(equivalence_table[&q]);
+                    println!(
+                        "contracting edge {} -> {} into {} -> {}",
+                        _point_from, _point_to, _point_from, to
+                    );
+                }
+                yycfg_edge[i].1 = equivalence_table[&q];
+            }
+        }
+    }
+    println!("yycfg_edge: {} / {}", yycfg_edge.len(), xxxx_edge_count);
+
+    for fact in yycfg_edge.iter() {
+        let (_point_from, block_from_idx) = block_from_point(fact.0);
+        let (_point_to, block_to_idx) = block_from_point(fact.1);
+        if block_from_idx == 0 || block_to_idx == 0 {
+            println!(
+                "B - yycfg_edge {:?} is from {} block {}, to {} block {}",
+                fact, _point_from, block_from_idx, _point_to, block_to_idx
+            );
+        }
+    }
+
+    // Step 5 - Prune facts which are now unneeded: they refer to points which are absent
+    // from the CFG, there is no need to take them into account in the analysis.
+
+    // NOP
+    println!("pre borrow_region: {}", facts.borrow_region.len());
+    facts.borrow_region
+        .retain(|(_, _, p)| !compressed_points.contains(p));
+    println!("post borrow_region: {}", facts.borrow_region.len());
+
+    // NOP
+    println!("pre killed: {}", facts.killed.len());
+    facts.killed.retain(|(_, p)| !compressed_points.contains(p));
+    println!("post killed: {}", facts.killed.len());
+
+    println!("pre outlives: {}", facts.outlives.len());
+    facts
+        .outlives
+        .retain(|(_, _, p)| !compressed_points.contains(p));
+    println!("post outlives: {}", facts.outlives.len());
+
+    println!("pre region_live_at: {}", region_live_at.len());
+    region_live_at
+        .retain(|(_, p)| !compressed_points.contains(p));
+    println!("post region_live_at: {}", region_live_at.len());
+
+    // facts
+    (
+        facts,
+        _known_contains, 
+        placeholder_origin, 
+        _placeholder_loan, 
+        region_live_at, 
+        universal_regions
+    )
+}
+
 pub fn blockify_my_love<T: FactTypes>(
     facts: crate::AllFacts<T>,
     unterner: &dyn super::Unterner<T>,
-    mut output: &mut Output<T>,
+    output: &mut Output<T>,
 ) {
     // function data
     // note: the `known_subset` relation in the facts does not necessarily contain its whole transitive closure,
@@ -79,105 +498,105 @@ pub fn blockify_my_love<T: FactTypes>(
         known_subset.len()
     );
 
-    // // The set of "interesting" loans
-    // let interesting_loan: FxHashSet<_> = facts
-    //     .invalidates
-    //     .iter()
-    //     .map(|&(_point, loan)| loan)
-    //     .collect();
+    // The set of "interesting" loans
+    let interesting_loan: FxHashSet<_> = facts
+        .invalidates
+        .iter()
+        .map(|&(_point, loan)| loan)
+        .collect();
     // println!("interesting_loan: {}", interesting_loan.len());
 
-    // // The "interesting" borrow regions are the ones referring to loans for which an error could occur
-    // let interesting_borrow_region: FxHashSet<_> = facts
-    //     .borrow_region
-    //     .iter()
-    //     .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
-    //     .copied()
-    //     .collect();
+    // The "interesting" borrow regions are the ones referring to loans for which an error could occur
+    let interesting_borrow_region: FxHashSet<_> = facts
+        .borrow_region
+        .iter()
+        .filter(|&(_origin, loan, _point)| interesting_loan.contains(loan))
+        .copied()
+        .collect();
 
-    // // The interesting origins are:
-    // // - for illegal access errors: any origin into which an interesting loan could flow.
-    // // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
-    // //   be tightened further to some of the placeholders which are _not_ in the
-    // //   `known_subset` relation: they are the only ones into which an unexpected placeholder
-    // //   loan can flow)
-    // let (interesting_origin, interesting_placeholder) = {
-    //     let mut iteration = Iteration::new();
+    // The interesting origins are:
+    // - for illegal access errors: any origin into which an interesting loan could flow.
+    // - for illegal subset relation errors: any placeholder origin. (TODO: this can likely
+    //   be tightened further to some of the placeholders which are _not_ in the
+    //   `known_subset` relation: they are the only ones into which an unexpected placeholder
+    //   loan can flow)
+    let (interesting_origin, interesting_placeholder) = {
+        let mut iteration = Iteration::new();
 
-    //     let outlives_o1 = Relation::from_iter(
-    //         facts
-    //             .outlives
-    //             .iter()
-    //             .map(|&(origin1, origin2, _point)| (origin1, origin2)),
-    //     );
+        let outlives_o1 = Relation::from_iter(
+            facts
+                .outlives
+                .iter()
+                .map(|&(origin1, origin2, _point)| (origin1, origin2)),
+        );
 
-    //     let interesting_origin = iteration.variable::<(T::Origin, ())>("interesting_origin");
-    //     let placeholder_origin_step1 =
-    //         iteration.variable::<((T::Origin, T::Origin), ())>("placeholder_origin_step1");
-    //     let placeholder_origin = iteration.variable::<(T::Origin, ())>("placeholder_origin");
+        let interesting_origin = iteration.variable::<(T::Origin, ())>("interesting_origin");
+        let placeholder_origin_step1 =
+            iteration.variable::<((T::Origin, T::Origin), ())>("placeholder_origin_step1");
+        let placeholder_origin = iteration.variable::<(T::Origin, ())>("placeholder_origin");
 
-    //     // interesting_origin(Origin) :-
-    //     //   interesting_borrow_region(Origin, _, _);
-    //     interesting_origin.extend(
-    //         interesting_borrow_region
-    //             .iter()
-    //             .map(|&(origin, _loan, _point)| (origin, ())),
-    //     );
+        // interesting_origin(Origin) :-
+        //   interesting_borrow_region(Origin, _, _);
+        interesting_origin.extend(
+            interesting_borrow_region
+                .iter()
+                .map(|&(origin, _loan, _point)| (origin, ())),
+        );
 
-    //     // interesting_origin(Origin) :-
-    //     //   placeholder(Origin, _);
-    //     interesting_origin.extend(
-    //         facts
-    //             .placeholder
-    //             .iter()
-    //             .map(|&(origin, _loan)| (origin, ())),
-    //     );
-    //     placeholder_origin.extend(
-    //         facts
-    //             .placeholder
-    //             .iter()
-    //             .map(|&(origin, _loan)| (origin, ())),
-    //     );
+        // interesting_origin(Origin) :-
+        //   placeholder(Origin, _);
+        interesting_origin.extend(
+            facts
+                .placeholder
+                .iter()
+                .map(|&(origin, _loan)| (origin, ())),
+        );
+        placeholder_origin.extend(
+            facts
+                .placeholder
+                .iter()
+                .map(|&(origin, _loan)| (origin, ())),
+        );
 
-    //     while iteration.changed() {
-    //         // interesting_origin(Origin2) :-
-    //         //   outlives(Origin1, Origin2, _),
-    //         //   interesting_origin(Origin1, _, _);
-    //         interesting_origin.from_join(
-    //             &interesting_origin,
-    //             &outlives_o1,
-    //             |_origin1, (), &origin2| (origin2, ()),
-    //         );
+        while iteration.changed() {
+            // interesting_origin(Origin2) :-
+            //   outlives(Origin1, Origin2, _),
+            //   interesting_origin(Origin1, _, _);
+            interesting_origin.from_join(
+                &interesting_origin,
+                &outlives_o1,
+                |_origin1, (), &origin2| (origin2, ()),
+            );
 
-    //         // placeholder_origin(Origin2) :-
-    //         //   placeholder_origin(Origin1, _, _),
-    //         //   outlives(Origin1, Origin2, _),
-    //         //   !known_subset(Origin1, Origin2);
-    //         placeholder_origin_step1.from_join(
-    //             &placeholder_origin,
-    //             &outlives_o1,
-    //             |&origin1, (), &origin2| ((origin1, origin2), ()),
-    //         );
-    //         placeholder_origin.from_antijoin(
-    //             &placeholder_origin_step1,
-    //             &known_subset,
-    //             |&(_origin1, origin2), ()| (origin2, ()),
-    //         );
-    //     }
+            // placeholder_origin(Origin2) :-
+            //   placeholder_origin(Origin1, _, _),
+            //   outlives(Origin1, Origin2, _),
+            //   !known_subset(Origin1, Origin2);
+            placeholder_origin_step1.from_join(
+                &placeholder_origin,
+                &outlives_o1,
+                |&origin1, (), &origin2| ((origin1, origin2), ()),
+            );
+            placeholder_origin.from_antijoin(
+                &placeholder_origin_step1,
+                &known_subset,
+                |&(_origin1, origin2), ()| (origin2, ()),
+            );
+        }
 
-    //     (
-    //         interesting_origin
-    //             .complete()
-    //             .iter()
-    //             .map(|&(origin1, _)| origin1)
-    //             .collect::<FxHashSet<_>>(),
-    //         placeholder_origin
-    //             .complete()
-    //             .iter()
-    //             .map(|&(origin1, _)| origin1)
-    //             .collect::<FxHashSet<_>>()
-    //     )
-    // };
+        (
+            interesting_origin
+                .complete()
+                .iter()
+                .map(|&(origin1, _)| origin1)
+                .collect::<FxHashSet<_>>(),
+            placeholder_origin
+                .complete()
+                .iter()
+                .map(|&(origin1, _)| origin1)
+                .collect::<FxHashSet<_>>()
+        )
+    };
 
     // println!("interesting_origin: {}", interesting_origin.len());
     // println!("interesting_placeholder: {}", interesting_placeholder.len());
@@ -201,6 +620,15 @@ pub fn blockify_my_love<T: FactTypes>(
         (point, block_idx.parse::<usize>().unwrap())
     };
 
+    let (
+        facts,
+        _known_contains, 
+        placeholder_origin, 
+        _placeholder_loan, 
+        region_live_at, 
+        universal_regions
+    ) = compress_facts(facts, unterner, output);
+
     let mut block_borrow_region: FxHashMap<usize, FxHashSet<(T::Origin, T::Loan, T::Point)>> =
         Default::default();
     let mut xxx = 0;
@@ -209,9 +637,9 @@ pub fn blockify_my_love<T: FactTypes>(
         // println!("borrow_region {:?} is from {} block {}", fact, point, block_idx);
 
         // interestingness filter
-        // if !interesting_borrow_region.contains(&fact) {
-        //     continue;
-        // }
+        if !interesting_borrow_region.contains(&fact) {
+            continue;
+        }
 
         xxx += 1;
 
@@ -296,9 +724,9 @@ pub fn blockify_my_love<T: FactTypes>(
         // println!("outlives {:?} is from {} block {}", fact, point, block_idx);
 
         // interestingness filter
-        // if !interesting_origin.contains(&fact.0) && !interesting_placeholder.contains(&fact.0) {
-        //     continue;
-        // }
+        if !interesting_origin.contains(&fact.0) && !interesting_placeholder.contains(&fact.0) {
+            continue;
+        }
 
         xxx += 1;
 
@@ -323,287 +751,13 @@ pub fn blockify_my_love<T: FactTypes>(
     println!("block_invalidates done: {}", facts.invalidates.len());
 
     ///////////////////
-    // Step 1 - Index the CFG to find the eligible points matching the requirements,
-    // and make the sets of live regions at each point easily comparable.
-    let mut successors = FxHashMap::default();
-    let mut predecessors = FxHashMap::default();
-
-    use std::collections::hash_map::Entry;
-
-    let xxxx_edge_count = facts.cfg_edge.len();
-
-    for &(p, q) in &facts.cfg_edge {
-        match successors.entry(p) {
-            Entry::Vacant(entry) => {
-                entry.insert(Some(q));
-            }
-            Entry::Occupied(mut entry) => {
-                let successor = entry.get_mut();
-                if successor.is_some() {
-                    // There is already a successor: this point can't be compressed
-                    *successor = None;
-                }
-            }
-        }
-
-        match predecessors.entry(q) {
-            Entry::Vacant(entry) => {
-                entry.insert(Some(p));
-            }
-
-            Entry::Occupied(mut entry) => {
-                let predecessor = entry.get_mut();
-                if predecessor.is_some() {
-                    // There is already a predecessor: this point can't be compressed
-                    *predecessor = None;
-                }
-            }
-        }
-    }
-
-    let mut xoutlives = FxHashMap::default();
-    for (o1, o2, p) in &facts.outlives {
-        xoutlives
-            .entry(*p)
-            .or_insert_with(FxHashSet::default)
-            .insert((*o1, *o2));
-    }
-
-    let mut xkilled = FxHashMap::default();
-    for &(l, p) in &facts.killed {
-        xkilled
-            .entry(p)
-            .or_insert_with(FxHashSet::default)
-            .insert(l);
-    }
-
-    let mut xinvalidates = FxHashMap::default();
-    for &(p, l) in &facts.invalidates {
-        xinvalidates
-            .entry(p)
-            .or_insert_with(FxHashSet::default)
-            .insert(l);
-    }
-
-    ///////////////////
-
-    let mut yycfg_edge = facts.cfg_edge.clone();
 
     // function data
-    let (_known_contains, placeholder_origin, _placeholder_loan, region_live_at, universal_regions) =
-        create_function_data(facts, &mut output);
-    println!("function data computed");
+    // let (_known_contains, placeholder_origin, _placeholder_loan, region_live_at, universal_regions) =
+    //     create_function_data(facts, &mut output);
+    // println!("function data computed");
 
     //////////
-    let mut xregion_live_at = FxHashMap::default();
-    for &(r, p) in &region_live_at {
-        xregion_live_at
-            .entry(p)
-            .or_insert_with(FxHashSet::default)
-            .insert(r);
-    }
-
-    // Step 2 - Locate eligible points
-    let mut compressed_points = FxHashSet::default();
-    let mut compressible_edges = Vec::new();
-
-    for (p, q) in successors.into_iter() {
-        // Compressible points have only one outgoing edge.
-        //
-        // Note: it could be interesting to investigate the impact of contracting acceptable
-        // children edges into `p`'s parent : in the graph `(a, b), (b, c), (b, d)`
-        // contracting `b` away would require additional constraints between `c`, `d` and `a`.
-        // However, in early tests of our datasets, the number of cases where all children edges
-        // had the same set of live regions as their parent seemed small (e.g for clap, for 49K total
-        // points: 3275 points had more than one child node, with 231 having the same live regions).
-        // There might be rules specific to multiple-children cases but they probably aren't the same as the
-        // single-child node cases implemented here.
-
-        let q = match q {
-            None => continue, // more than one successor
-            Some(successor) => successor,
-        };
-
-        let (_x, block_x_idx) = block_from_point(p);
-        let (_y, block_y_idx) = block_from_point(q);
-        
-        use facts::Atom;
-        if block_x_idx == 0 && p.index() == 1316 {
-            println!("point p: {} - predecessors: {:?}", _x, predecessors.get(&p));
-        }
-
-        if block_y_idx == 0 && q.index() == 1316 {
-            println!("point q: {} - predecessors: {:?}", _y, predecessors.get(&q));
-        }
-
-        if block_x_idx != block_y_idx {
-            continue; // no inter-block compression
-        }
-
-        // Compressible points have only one incoming edge, and as the the point `p` is merged
-        // into its parent's edge, the root edge can't be contracted.
-        match predecessors.get(&q) {
-            None => {  println!("point {:?} is the root", q); continue },       // root node
-            Some(None) => continue, // more than one predecessor
-            Some(Some(_)) => {}
-        }
-
-        // Compressible points have the same live regions.
-        if xregion_live_at.get(&p) != xregion_live_at.get(&q) {
-            continue;
-        }
-
-        // let a = xoutlives.get(&p);
-        // let b = xoutlives.get(&q);
-        // match (a, b) {
-        //     (Some(x), _) if !x.is_empty() => continue,
-        //     (_, Some(x)) if !x.is_empty() => continue,
-        //     _ => {}
-        // }
-
-        if xoutlives.get(&p) != xoutlives.get(&q) {
-            continue;
-        }
-
-        // let a = xkilled.get(&p);
-        // let b = xkilled.get(&q);
-        // match (a, b) {
-        //     (Some(x), _) if !x.is_empty() => continue,
-        //     (_, Some(x)) if !x.is_empty() => continue,
-        //     _ => {}
-        // }
-
-        if xkilled.get(&p) != xkilled.get(&q) {
-            continue;
-        }
-
-        // if xinvalidates.get(&p) != xinvalidates.get(&q) {
-        //     continue;
-        // }
-
-        // let a = xinvalidates.get(&p);
-        // let b = xinvalidates.get(&q);
-        // match (a, b) {
-        //     (Some(x), _) if !x.is_empty() => continue,
-        //     (_, Some(x)) if !x.is_empty() => continue,
-        //     _ => {}
-        // }
-
-        // Note: as only `invalidates` points can be the source of errors, more investigation
-        // could be done to see whether there is more compression and filtering opportunities
-        // there: the important points will contribute to liveness while not being error
-        // sources.
-
-        if block_x_idx + block_y_idx == 0 {
-            println!("point {} is compressible", _x);
-        }
-
-        compressible_edges.push((p, q));
-        compressed_points.insert(p);
-    }
-
-    println!("compressible_edges: {} / {}", compressible_edges.len(), xxxx_edge_count);
-    println!("compressed points: {}", compressed_points.len());
-
-    // Step 3 - Compute the CFG compression
-    // - Propagate the previously located points along compressed edges until reaching the
-    //   important point at the end of the chain.
-    // - Record these vertex contractions in an equivalence table: the edges from compressed
-    //   points to non-compressed points necessary to decompress the live borrows which could
-    //   be computed at these important points.
-    let equivalence_table = {
-        let mut iteration = Iteration::new();
-
-        let compression_table = iteration.variable("compression_table");
-        let compressed_edge = iteration.variable_indistinct("compressed_edge");
-
-        let compressed_point = Relation::from_iter(compressed_points.iter().cloned());
-
-        let propagated_edge_q = iteration.variable("propagated_edge_q");
-        propagated_edge_q.insert(Relation::from_iter(
-            compressible_edges.iter().map(|&(p, q)| (q, p)),
-        ));
-
-        compressed_edge.insert(compressible_edges.into());
-
-        while iteration.changed() {
-            // propagated_edge(P, Q) :- compressed_edge(P, Q);
-            // -> already done at loading time for a static input
-
-            // propagated_edge(P, R) :-
-            //     propagated_edge(P, Q),
-            //     compressed_edge(Q, R).
-            propagated_edge_q
-                .from_join(&propagated_edge_q, &compressed_edge, |&_q, &p, &r| (r, p));
-
-            // compression_table(P, Q) :-
-            //     propagated_edge(P, Q),
-            //     !compressed_point(Q).
-            compression_table
-                .from_antijoin(&propagated_edge_q, &compressed_point, |&q, &p| (p, q));
-        }
-
-        let mut equivalence_table = FxHashMap::default();
-        for &(p, q) in compression_table.complete().iter() {
-            equivalence_table.insert(p, q);
-        }
-
-        equivalence_table
-    };
-
-    for fact in yycfg_edge.iter() {
-        let (_point_from, block_from_idx) = block_from_point(fact.0);
-        let (_point_to, block_to_idx) = block_from_point(fact.1);
-        if block_from_idx == 0 || block_to_idx == 0 {
-            println!("A - yycfg_edge {:?} is from {} block {}, to {} block {}", fact, _point_from, block_from_idx, _point_to, block_to_idx);
-        }
-    }
-
-    // Step 4 - Contract the CFG according to the edges' contribution to `subset`s:
-    // 1) edges between important points: keep them as-is, they contribute to `subset`s
-    // 2) edges from compressible points: contract them away, they don't contribute to
-    //   `subset`s.
-    // 3) edges from an important point to a compressible point: propagated from the source to
-    //    its eventual destination (an important point), potentially through a chain of compressible
-    //    points.
-    //    For example, e1: (p, q), e2 (q, r), e3 (r, s) where `q` and `r` are compressible, and
-    //    `q`, `r`, and `s` have equivalent contributions to `subset`s.
-    //    - e2 and e3 will be removed by rule #2.
-    //    - we keep the same liveness differences by connecting the source and destination
-    //      of the chain: (p, s)
-    //
-    for i in (0..yycfg_edge.len()).rev() {
-        let (p, q) = yycfg_edge[i];
-        let (_point_from, a) = block_from_point(p);
-        let (_point_to, b) = block_from_point(q);
-        if compressed_points.contains(&p) {
-            if a == 0 || b == 0 {
-                println!("removing edge {} -> {} as {} was compressed away", _point_from, _point_to, _point_from);
-            }
-            yycfg_edge.swap_remove(i);
-        } else {
-            if compressed_points.contains(&q) {
-                if a == 0 || b == 0 {
-                    let (to, _) = block_from_point(equivalence_table[&q]);
-                    println!("contracting edge {} -> {} into {} -> {}", _point_from, _point_to, _point_from, to);
-                }
-                yycfg_edge[i].1 = equivalence_table[&q];
-            }
-        }
-    }
-    println!("yycfg_edge: {} / {}", yycfg_edge.len(), xxxx_edge_count);
-
-    for fact in yycfg_edge.iter() {
-        let (_point_from, block_from_idx) = block_from_point(fact.0);
-        let (_point_to, block_to_idx) = block_from_point(fact.1);
-        if block_from_idx == 0 || block_to_idx == 0 {
-            println!("B - yycfg_edge {:?} is from {} block {}, to {} block {}", fact, _point_from, block_from_idx, _point_to, block_to_idx);
-        }
-    }
-
-    std::process::exit(0);
-
-    /////////
 
     // liveness block data
     let mut block_region_live_at: FxHashMap<usize, FxHashSet<(T::Origin, T::Point)>> =
@@ -614,9 +768,9 @@ pub fn blockify_my_love<T: FactTypes>(
         let (_point, block_idx) = block_from_point(fact.1);
 
         // Interestingness filter (should be uplifted to liveness itself as usual, this is just a test)
-        // if !interesting_origin.contains(&fact.0) {
-        //     continue;
-        // }
+        if !interesting_origin.contains(&fact.0) {
+            continue;
+        }
 
         xxx += 1;
 
