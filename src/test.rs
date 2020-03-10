@@ -8,7 +8,7 @@ use crate::tab_delim;
 use crate::test_util::{assert_equal, check_program};
 use polonius_engine::output::Unterner;
 use polonius_engine::Algorithm;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::error::Error;
 use std::path::Path;
 
@@ -705,6 +705,12 @@ fn errors_in_subset_relations_dataset2() {
     assert!(naive.errors.is_empty());
     assert_eq!(naive.subset_errors.len(), 15);
 
+    let mut naive_locationless_subset_errors = FxHashSet::default();
+    for (_point, illegal_subsets) in &naive.subset_errors {
+        naive_locationless_subset_errors.extend(illegal_subsets.iter().copied());
+    }
+    assert_eq!(naive_locationless_subset_errors.len(), 3);
+
     let location_insensitive =
         Output::compute(&facts, Algorithm::LocationInsensitive, false, Some(tables));
     assert!(location_insensitive.errors.is_empty());
@@ -712,7 +718,12 @@ fn errors_in_subset_relations_dataset2() {
 
     let blocky = Output::compute(&facts, Algorithm::Blocky, false, Some(tables));
     assert!(blocky.errors.is_empty());
-    assert_eq!(blocky.subset_errors.len(), 15);
 
-    assert_eq!(naive.subset_errors, blocky.subset_errors);
+    let mut blocky_locationless_subset_errors = FxHashSet::default();
+    for (_point, illegal_subsets) in &blocky.subset_errors {
+        blocky_locationless_subset_errors.extend(illegal_subsets.iter().copied());
+    }
+    assert_eq!(blocky_locationless_subset_errors.len(), 3);
+
+    assert_equal(&blocky_locationless_subset_errors, &naive_locationless_subset_errors);
 }
