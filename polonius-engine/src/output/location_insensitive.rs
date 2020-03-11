@@ -17,7 +17,10 @@ use crate::output::{Context, Output};
 pub(super) fn compute<T: FactTypes>(
     ctx: &Context<T>,
     result: &mut Output<T>,
-) -> Relation<(T::Loan, T::Point)> {
+) -> (
+    Relation<(T::Loan, T::Point)>,
+    Relation<(T::Origin, T::Origin)>,
+) {
     let timer = Instant::now();
 
     // Static inputs
@@ -85,8 +88,8 @@ pub(super) fn compute<T: FactTypes>(
         potential_errors.from_leapjoin(
             &requires,
             (
-                region_live_at.extend_with(|&(origin, _loan)| origin),
                 invalidates.extend_with(|&(_origin, loan)| loan),
+                region_live_at.extend_with(|&(origin, _loan)| origin),
             ),
             |&(_origin, loan), &point| (loan, point),
         );
@@ -99,9 +102,9 @@ pub(super) fn compute<T: FactTypes>(
         potential_subset_errors.from_leapjoin(
             &requires,
             (
+                known_contains.filter_anti(|&(origin2, loan1)| (origin2, loan1)),
                 placeholder_origin.filter_with(|&(origin2, _loan1)| (origin2, ())),
                 placeholder_loan.extend_with(|&(_origin2, loan1)| loan1),
-                known_contains.filter_anti(|&(origin2, loan1)| (origin2, loan1)),
                 // remove symmetries:
                 datafrog::ValueFilter::from(|&(origin2, _loan1), &origin1| origin2 != origin1),
             ),
@@ -131,15 +134,6 @@ pub(super) fn compute<T: FactTypes>(
     let potential_errors = potential_errors.complete();
     let potential_subset_errors = potential_subset_errors.complete();
 
-    // TMP: the error location is meaningless for a location-insensitive subset error analysis
-    for &(origin1, origin2) in potential_subset_errors.iter() {
-        result
-            .subset_errors
-            .entry(0.into())
-            .or_default()
-            .insert((origin1, origin2));
-    }
-
     info!(
         "location_insensitive is complete: {} `potential_errors` tuples, {} `potential_subset_errors` tuples, {:?}",
         potential_errors.len(),
@@ -147,5 +141,5 @@ pub(super) fn compute<T: FactTypes>(
         timer.elapsed()
     );
 
-    potential_errors
+    (potential_errors, potential_subset_errors)
 }
