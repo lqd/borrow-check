@@ -110,7 +110,7 @@ fn test_insensitive_errors() -> Result<(), Box<dyn Error>> {
     println!("facts_dir = {:?}", facts_dir);
     let tables = &mut intern::InternerTables::new();
     let all_facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir)?;
-    let insensitive = Output::compute(&all_facts, Algorithm::LocationInsensitive, false, None);
+    let insensitive = Output::compute(&all_facts, Algorithm::LocationInsensitive, false, Some(tables));
 
     let mut expected = FxHashMap::default();
     expected.insert(Point::from(24), vec![Loan::from(1)]);
@@ -129,7 +129,7 @@ fn test_sensitive_passes_issue_47680() -> Result<(), Box<dyn Error>> {
         .join("main");
     let tables = &mut intern::InternerTables::new();
     let all_facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir)?;
-    let sensitive = Output::compute(&all_facts, Algorithm::DatafrogOpt, false, None);
+    let sensitive = Output::compute(&all_facts, Algorithm::DatafrogOpt, false, Some(tables));
 
     assert!(sensitive.errors.is_empty());
     Ok(())
@@ -156,7 +156,7 @@ fn no_subset_symmetries_exist() -> Result<(), Box<dyn Error>> {
         false
     };
 
-    let naive = Output::compute(&all_facts, Algorithm::Naive, true, None);
+    let naive = Output::compute(&all_facts, Algorithm::Naive, true, Some(tables));
     assert!(!subset_symmetries_exist(&naive));
 
     // FIXME: the issue-47680 dataset is suboptimal here as DatafrogOpt does not
@@ -164,7 +164,7 @@ fn no_subset_symmetries_exist() -> Result<(), Box<dyn Error>> {
     // that the assert in verbose  mode didn't trigger. Therefore, switch to this dataset
     // whenever it's fast enough to be enabled in tests, or somehow create a test facts program
     // or reduce it from clap.
-    let opt = Output::compute(&all_facts, Algorithm::DatafrogOpt, true, None);
+    let opt = Output::compute(&all_facts, Algorithm::DatafrogOpt, true, Some(tables));
     assert!(!subset_symmetries_exist(&opt));
     Ok(())
 }
@@ -315,7 +315,7 @@ fn smoke_test_success_1() {
     let tables = &mut intern::InternerTables::new();
     let facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir).expect("facts");
 
-    let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, true, None);
+    let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, true, Some(tables));
     assert!(!location_insensitive.errors.is_empty());
 
     test_facts(&facts, Algorithm::OPTIMIZED, tables);
@@ -332,7 +332,7 @@ fn smoke_test_success_2() {
     let tables = &mut intern::InternerTables::new();
     let facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir).expect("facts");
 
-    let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, true, None);
+    let location_insensitive = Output::compute(&facts, Algorithm::LocationInsensitive, true, Some(tables));
     assert!(location_insensitive.errors.is_empty());
 
     test_facts(&facts, Algorithm::OPTIMIZED, tables);
@@ -350,10 +350,10 @@ fn var_live_in_single_block() {
         }
     ";
 
-    let mut tables = intern::InternerTables::new();
-    let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
+    let tables = &mut intern::InternerTables::new();
+    let facts = parse_from_program(program, tables).expect("Parsing failure");
 
-    let liveness = Output::compute(&facts, Algorithm::Naive, true, None).var_live_at;
+    let liveness = Output::compute(&facts, Algorithm::Naive, true, Some(tables)).var_live_at;
     println!("Registered liveness data: {:?}", liveness);
     for (point, variables) in liveness.iter() {
         println!("{:?} has live variables: {:?}", point, variables);
@@ -384,10 +384,10 @@ fn var_live_in_successor_propagates_to_predecessor() {
         }
     ";
 
-    let mut tables = intern::InternerTables::new();
-    let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
+    let tables = &mut intern::InternerTables::new();
+    let facts = parse_from_program(program, tables).expect("Parsing failure");
 
-    let liveness = Output::compute(&facts, Algorithm::Naive, true, None).var_live_at;
+    let liveness = Output::compute(&facts, Algorithm::Naive, true, Some(tables)).var_live_at;
     println!("Registered liveness data: {:?}", liveness);
     println!("CFG: {:?}", facts.cfg_edge);
     for (point, variables) in liveness.iter() {
@@ -421,10 +421,10 @@ fn var_live_in_successor_killed_by_reassignment() {
         }
     ";
 
-    let mut tables = intern::InternerTables::new();
-    let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
+    let tables = &mut intern::InternerTables::new();
+    let facts = parse_from_program(program, tables).expect("Parsing failure");
 
-    let result = Output::compute(&facts, Algorithm::Naive, true, None);
+    let result = Output::compute(&facts, Algorithm::Naive, true, Some(tables));
     println!("result: {:#?}", result);
     let liveness = result.var_live_at;
     println!("CFG: {:#?}", facts.cfg_edge);
@@ -482,10 +482,10 @@ fn var_drop_used_simple() {
         }
     ";
 
-    let mut tables = intern::InternerTables::new();
-    let facts = parse_from_program(program, &mut tables).expect("Parsing failure");
+    let tables = &mut intern::InternerTables::new();
+    let facts = parse_from_program(program, tables).expect("Parsing failure");
 
-    let result = Output::compute(&facts, Algorithm::Naive, true, None);
+    let result = Output::compute(&facts, Algorithm::Naive, true, Some(tables));
     println!("result: {:#?}", result);
     let liveness = result.var_drop_live_at;
     println!("CFG: {:#?}", facts.cfg_edge);
@@ -666,7 +666,7 @@ fn errors_in_subset_relations_dataset() {
     let facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir).expect("facts");
 
     // this function has no illegal access errors, but one subset error, over 3 points
-    let result = Output::compute(&facts, Algorithm::Naive, true, None);
+    let result = Output::compute(&facts, Algorithm::Naive, true, Some(tables));
     assert!(result.errors.is_empty());
     assert_eq!(result.subset_errors.len(), 3);
 
@@ -701,7 +701,7 @@ fn errors_in_subset_relations_dataset2() {
 
     // TODO: collect the origins at all these points to validate them
 
-    let naive = Output::compute(&facts, Algorithm::Naive, false, None);
+    let naive = Output::compute(&facts, Algorithm::Naive, false, Some(tables));
     assert!(naive.errors.is_empty());
     assert_eq!(naive.subset_errors.len(), 15);
 
