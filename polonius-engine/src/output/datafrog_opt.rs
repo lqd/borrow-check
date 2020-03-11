@@ -12,15 +12,169 @@ use datafrog::{Iteration, Relation, RelationLeaper};
 use std::time::Instant;
 
 use crate::facts::FactTypes;
-use crate::output::{Context, Output};
+use crate::output::{Context, Output, Unterner};
+
+use rustc_hash::FxHashSet;
 
 pub(super) fn compute<T: FactTypes>(
     ctx: &Context<T>,
     result: &mut Output<T>,
+    unterner: &dyn Unterner<T>,
 ) -> Relation<(T::Loan, T::Point)> {
     let timer = Instant::now();
 
-    let errors = {
+    if let Some(potential_subset_errors) = &ctx.potential_subset_errors {
+        // The potential subset errors contain pairs of origins where the first origin has flowed
+        // into the second, and that wasn't explicitly declared. This quick analysis is done without
+        // taking the points at which the origin flows into the other, nor whether they were live
+        // at this point (the placeholder origins are always live at all points, but they can flow
+        // into dead origins at a given point, and then into another placeholder). These quick results
+        // need to be validated in order to have the correct set of subset errors, but are useful
+        // to show which placeholder origins could cause errors, and which subset relations connect
+        // the 2 placeholders.
+        // That means that placeholder origins absent from these errors, and the subset relations
+        // connecting them, are safe to ignore: only the subsets flowing from the first origin, and
+        // ultimately into the second origin will contribute to the resulting subset errors.
+
+        // If the potential subset errors have been computed, but there are no such possible errors,
+        // then we can be focus on just keeping the subsets facts which can cause an illegal access
+        // error
+        if !potential_subset_errors.is_empty() {
+            println!(
+                "some potential subset errors have been found: {}",
+                potential_subset_errors.len()
+            );
+            for &(origin1, origin2) in potential_subset_errors.iter() {
+                println!(
+                    "potential_subset_error: {} may unexpectedly flow into {}",
+                    unterner.untern_origin(origin1),
+                    unterner.untern_origin(origin2),
+                );
+            }
+
+            println!("outlives: {}", ctx.outlives.len());
+
+            let interesting_origin = {
+                let mut iteration = Iteration::new();
+
+                let outlives_o1 = Relation::from_iter(
+                    ctx.outlives
+                        .iter()
+                        .map(|&(origin1, origin2, _point)| (origin1, origin2)),
+                );
+
+                let outlives_o2 = Relation::from_iter(
+                    ctx.outlives
+                        .iter()
+                        .map(|&(origin1, origin2, _point)| (origin2, origin1)),
+                );
+
+                // This relation will contain all origins into which the source of the subset error
+                // will flow, including the ones not flowing into the destination origin of the error.
+                let placeholder1_superset =
+                    iteration.variable::<(T::Origin, ())>("placeholder1_superset");
+
+                // placeholder1_superset(Origin1) :-
+                //   potential_subset_error(Origin1, _);
+                placeholder1_superset.extend(
+                    potential_subset_errors
+                        .iter()
+                        .map(|&(origin1, _origin2)| (origin1, ())),
+                );
+
+                // This relation will contain all origins which flow into the destination origin
+                // of the subset error, including the ones not downstream from the source origin
+                // of the error.
+                let placeholder2_subset =
+                    iteration.variable::<(T::Origin, ())>("placeholder2_subset");
+
+                // placeholder2_subset(Origin2) :-
+                //   potential_subset_error(_, Origin2);
+                placeholder2_subset.extend(
+                    potential_subset_errors
+                        .iter()
+                        .map(|&(_origin1, origin2)| (origin2, ())),
+                );
+
+                while iteration.changed() {
+                    // placeholder1_superset(Origin2) :-
+                    //   outlives(Origin1, Origin2, _),
+                    //   placeholder1_superset(Origin1);
+                    placeholder1_superset.from_join(
+                        &placeholder1_superset,
+                        &outlives_o1,
+                        |_origin1, _, &origin2| (origin2, ()),
+                    );
+
+                    // placeholder2_subset(Origin1) :-
+                    //   outlives(Origin1, Origin2, _),
+                    //   placeholder2_subset(Origin2);
+                    placeholder2_subset.from_join(
+                        &placeholder2_subset,
+                        &outlives_o2,
+                        |_origin2, _, &origin1| (origin1, ()),
+                    );
+                }
+
+                let placeholder1_superset = placeholder1_superset.complete();
+                // for &(origin, _) in placeholder1_superset.iter() {
+                //     println!("placeholder1_superset: {:?}", origin);
+                // }
+
+                let placeholder2_subset = placeholder2_subset.complete();
+                // for &(origin, _) in placeholder2_subset.iter() {
+                //     println!("placeholder2_subset: {:?}", origin);
+                // }
+
+                let placeholder1_superset: FxHashSet<_> = placeholder1_superset
+                    .into_iter()
+                    .map(|&(origin, _)| origin)
+                    .collect();
+                let placeholder2_subset: FxHashSet<_> = placeholder2_subset
+                    .into_iter()
+                    .map(|&(origin, _)| origin)
+                    .collect();
+
+                println!("placeholder1_superset: {}", placeholder1_superset.len());
+                println!("placeholder2_subset: {}", placeholder2_subset.len());
+
+                // This relation will contain the critical path connecting the origins in the subset
+                // error: the origins dowstream from the source, and upstream from the destination.
+                let critical_path: FxHashSet<_> = placeholder1_superset
+                    .intersection(&placeholder2_subset)
+                    .copied()
+                    .collect();
+                println!("critical_path: {}", critical_path.len());
+                // println!("critical_path: {:?}", critical_path);
+
+                critical_path
+            };
+
+            // println!("interesting_origin: {}", interesting_origin.len());
+
+            // The subsets flowing from an interesting origin are interesting, they're the
+            // critical path connecting the source origin to the destination origin.
+            for &(origin1, _origin2, _) in ctx.outlives {
+                let is_interesting = interesting_origin.contains(&origin1);
+                println!(
+                    "outlives {} -> {} interesting: {}",
+                    unterner.untern_origin(origin1),
+                    unterner.untern_origin(_origin2),
+                    is_interesting
+                );
+                if !is_interesting {
+                    panic!("found an interesting case to test filtering, there are potential subset errors and uninteresting `outlives` here");
+                }
+            }
+        } else {
+            // No subset errors can happen, we can filter all the origins and subsets which can't
+            // cause illegal access errors: the facts which don't ultimately lead to a live loan
+            // being invalidated.
+            println!("no subset errors can happen, let's filter even more");
+        }
+    }
+
+    let (errors, subset_errors) = {
         // Static inputs
         let region_live_at_rel = &ctx.region_live_at;
         let cfg_edge_rel = &ctx.cfg_edge;
@@ -484,12 +638,13 @@ pub(super) fn compute<T: FactTypes>(
                 .insert((origin1, origin2));
         }
 
-        errors.complete()
+        (errors.complete(), subset_errors)
     };
 
     info!(
-        "errors is complete: {} tuples, {:?}",
+        "analysis done: {} `errors` tuples, {} `subset_errors` tuples, {:?}",
         errors.len(),
+        subset_errors.len(),
         timer.elapsed()
     );
 
