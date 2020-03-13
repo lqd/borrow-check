@@ -1,0 +1,178 @@
+// MIR for `bar::{{closure}}#0`
+// source = MirSource { instance: Item(DefId(0:8 ~ variance_vec_covariant[317d]::bar[0]::{{closure}}[0])), promoted: None }
+// pass_name = nll
+// disambiguator = 0
+
+| Free Region Mapping
+| '_#0r | Global | ['_#3r, '_#2r, '_#0r, '_#5r, '_#1r, '_#4r]
+| '_#1r | External | ['_#5r, '_#1r]
+| '_#2r | External | ['_#2r, '_#5r]
+| '_#3r | External | ['_#3r, '_#2r, '_#5r]
+| '_#4r | External | ['_#5r, '_#4r]
+| '_#5r | Local | ['_#5r]
+|
+| Inferred Region Values
+| '_#0r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#0r, '_#1r, '_#2r, '_#3r, '_#4r, '_#5r}
+| '_#1r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#2r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#2r}
+| '_#3r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r, '_#3r}
+| '_#4r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#4r}
+| '_#5r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#5r}
+| '_#6r | U0 | {bb0[4..=5], bb1[0..=2], bb3[0..=1]}
+| '_#7r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#2r}
+| '_#8r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r, '_#3r}
+| '_#9r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#10r | U0 | {bb1[0..=2], bb3[0..=1]}
+| '_#11r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#12r | U0 | {bb3[1]}
+| '_#13r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#14r | U0 | {}
+| '_#15r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#16r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#17r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#2r}
+| '_#18r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r, '_#3r}
+| '_#19r | U0 | {bb3[0..=1]}
+| '_#20r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#21r | U0 | {bb1[1..=2], bb3[0..=1]}
+| '_#22r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#23r | U0 | {bb1[0..=2], bb3[0..=1]}
+| '_#24r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#25r | U0 | {bb0[5], bb1[0..=2], bb3[0..=1]}
+| '_#26r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+| '_#27r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#2r}
+| '_#28r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r, '_#3r}
+| '_#29r | U0 | {bb0[5], bb1[0..=2], bb3[0..=1]}
+| '_#30r | U0 | {bb1[2], bb3[0..=1]}
+| '_#31r | U0 | {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2], '_#1r}
+|
+| Inference Constraints
+| '_#0r live at {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2]}
+| '_#1r live at {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2]}
+| '_#2r live at {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2]}
+| '_#3r live at {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2]}
+| '_#4r live at {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2]}
+| '_#5r live at {bb0[0..=5], bb1[0..=2], bb2[0], bb3[0..=1], bb4[0..=2]}
+| '_#6r live at {bb0[4]}
+| '_#7r live at {bb0[4]}
+| '_#8r live at {bb0[4]}
+| '_#9r live at {bb0[5]}
+| '_#10r live at {bb1[0]}
+| '_#11r live at {bb1[2]}
+| '_#12r live at {bb3[1]}
+| '_#13r live at {bb3[1]}
+| '_#19r live at {bb3[0..=1]}
+| '_#20r live at {bb3[0..=1]}
+| '_#21r live at {bb1[1..=2]}
+| '_#22r live at {bb1[1..=2]}
+| '_#23r live at {bb1[0]}
+| '_#24r live at {bb1[0]}
+| '_#25r live at {bb0[5]}
+| '_#26r live at {bb0[5]}
+| '_#29r live at {bb0[5]}
+| '_#30r live at {bb1[2]}
+| '_#1r: '_#15r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:35: 12:35)
+| '_#1r: '_#16r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:32: 12:53)
+| '_#2r: '_#17r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:32: 12:53)
+| '_#3r: '_#18r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:32: 12:53)
+| '_#6r: '_#25r due to Boring at Single(bb0[4])
+| '_#7r: '_#6r due to Boring at Single(bb0[4])
+| '_#7r: '_#17r due to Boring at Single(bb0[4])
+| '_#8r: '_#18r due to Boring at Single(bb0[4])
+| '_#8r: '_#26r due to Boring at Single(bb0[4])
+| '_#9r: '_#24r due to Boring at Single(bb0[5])
+| '_#9r: '_#29r due to Boring at Single(bb0[5])
+| '_#9r: '_#29r due to Boring at Single(bb0[5])
+| '_#10r: '_#21r due to Boring at Single(bb1[0])
+| '_#11r: '_#20r due to Boring at Single(bb1[2])
+| '_#11r: '_#30r due to Boring at Single(bb1[2])
+| '_#11r: '_#30r due to Boring at Single(bb1[2])
+| '_#13r: '_#12r due to Boring at Single(bb3[1])
+| '_#13r: '_#15r due to Return at Single(bb3[1])
+| '_#15r: '_#1r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:35: 12:35)
+| '_#15r: '_#31r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:35: 12:35)
+| '_#16r: '_#1r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:32: 12:53)
+| '_#17r: '_#2r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:32: 12:53)
+| '_#17r: '_#7r due to Boring at Single(bb0[4])
+| '_#17r: '_#27r due to Boring at Single(bb0[0])
+| '_#18r: '_#3r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:32: 12:53)
+| '_#18r: '_#8r due to Boring at Single(bb0[4])
+| '_#18r: '_#28r due to Boring at Single(bb0[0])
+| '_#19r: '_#12r due to CallArgument at Single(bb3[1])
+| '_#20r: '_#13r due to CallArgument at Single(bb3[1])
+| '_#21r: '_#30r due to CallArgument at Single(bb1[2])
+| '_#22r: '_#11r due to CallArgument at Single(bb1[2])
+| '_#23r: '_#10r due to Boring at Single(bb1[0])
+| '_#24r: '_#22r due to Boring at Single(bb1[0])
+| '_#25r: '_#29r due to Boring at Single(bb0[5])
+| '_#26r: '_#9r due to Boring at Single(bb0[5])
+| '_#27r: '_#17r due to Boring at Single(bb0[0])
+| '_#28r: '_#18r due to Boring at Single(bb0[0])
+| '_#29r: '_#23r due to Boring at Single(bb0[5])
+| '_#30r: '_#19r due to Boring at Single(bb1[2])
+| '_#31r: '_#15r due to BoringNoLocation at All(./variance-vec-covariant.rs:12:35: 12:35)
+|
+| Free Region Constraints
+| where '_#3r: '_#1r
+|
+fn  bar::{{closure}}#0(_1: [closure@./variance-vec-covariant.rs:12:32: 12:53 v2:&std::vec::Vec<&i32>]) -> std::option::Option<&i32> {
+    debug v2 => (*(_1.0: &std::vec::Vec<&i32>)); // in scope 0 at ./variance-vec-covariant.rs:11:30: 11:32
+    let mut _0: std::option::Option<&i32>; // return place in scope 0 at ./variance-vec-covariant.rs:12:35: 12:35
+    let mut _2: std::option::Option<&&i32>; // in scope 0 at ./variance-vec-covariant.rs:12:35: 12:44
+    let mut _3: &[&i32];                 // in scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+    let _4: &[&i32];                     // in scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+    let mut _5: &std::vec::Vec<&i32>;    // in scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+
+    bb0: {
+        StorageLive(_2);                 // bb0[0]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:44
+        StorageLive(_3);                 // bb0[1]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+        StorageLive(_4);                 // bb0[2]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+        StorageLive(_5);                 // bb0[3]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+        _5 = &(*(_1.0: &std::vec::Vec<&i32>)); // bb0[4]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+        _4 = const <std::vec::Vec<&i32> as std::ops::Deref>::deref(move _5) -> [return: bb1, unwind: bb2]; // bb0[5]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+                                         // ty::Const
+                                         // + ty: for<'r> fn(&'r std::vec::Vec<&i32>) -> &'r <std::vec::Vec<&i32> as std::ops::Deref>::Target {<std::vec::Vec<&i32> as std::ops::Deref>::deref}
+                                         // + val: Value(Scalar(<ZST>))
+                                         // mir::Constant
+                                         // + span: ./variance-vec-covariant.rs:12:35: 12:37
+                                         // + literal: Const { ty: for<'r> fn(&'r std::vec::Vec<&i32>) -> &'r <std::vec::Vec<&i32> as std::ops::Deref>::Target {<std::vec::Vec<&i32> as std::ops::Deref>::deref}, val: Value(Scalar(<ZST>)) }
+    }
+
+    bb1: {
+        _3 = &(*_4);                     // bb1[0]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:37
+        StorageDead(_5);                 // bb1[1]: scope 0 at ./variance-vec-covariant.rs:12:36: 12:37
+        _2 = const core::slice::<impl [&i32]>::get::<usize>(move _3, const 0usize) -> [return: bb3, unwind: bb2]; // bb1[2]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:44
+                                         // ty::Const
+                                         // + ty: for<'r> fn(&'r [&i32], usize) -> std::option::Option<&'r <usize as std::slice::SliceIndex<[&i32]>>::Output> {core::slice::<impl [&i32]>::get::<usize>}
+                                         // + val: Value(Scalar(<ZST>))
+                                         // mir::Constant
+                                         // + span: ./variance-vec-covariant.rs:12:38: 12:41
+                                         // + literal: Const { ty: for<'r> fn(&'r [&i32], usize) -> std::option::Option<&'r <usize as std::slice::SliceIndex<[&i32]>>::Output> {core::slice::<impl [&i32]>::get::<usize>}, val: Value(Scalar(<ZST>)) }
+                                         // ty::Const
+                                         // + ty: usize
+                                         // + val: Value(Scalar(0x0000000000000000))
+                                         // mir::Constant
+                                         // + span: ./variance-vec-covariant.rs:12:42: 12:43
+                                         // + literal: Const { ty: usize, val: Value(Scalar(0x0000000000000000)) }
+    }
+
+    bb2 (cleanup): {
+        resume;                          // bb2[0]: scope 0 at ./variance-vec-covariant.rs:12:32: 12:53
+    }
+
+    bb3: {
+        StorageDead(_3);                 // bb3[0]: scope 0 at ./variance-vec-covariant.rs:12:43: 12:44
+        _0 = const std::option::Option::<&&i32>::cloned(move _2) -> [return: bb4, unwind: bb2]; // bb3[1]: scope 0 at ./variance-vec-covariant.rs:12:35: 12:53
+                                         // ty::Const
+                                         // + ty: fn(std::option::Option<&&i32>) -> std::option::Option<&i32> {std::option::Option::<&&i32>::cloned}
+                                         // + val: Value(Scalar(<ZST>))
+                                         // mir::Constant
+                                         // + span: ./variance-vec-covariant.rs:12:45: 12:51
+                                         // + literal: Const { ty: fn(std::option::Option<&&i32>) -> std::option::Option<&i32> {std::option::Option::<&&i32>::cloned}, val: Value(Scalar(<ZST>)) }
+    }
+
+    bb4: {
+        StorageDead(_4);                 // bb4[0]: scope 0 at ./variance-vec-covariant.rs:12:52: 12:53
+        StorageDead(_2);                 // bb4[1]: scope 0 at ./variance-vec-covariant.rs:12:52: 12:53
+        return;                          // bb4[2]: scope 0 at ./variance-vec-covariant.rs:12:53: 12:53
+    }
+}
