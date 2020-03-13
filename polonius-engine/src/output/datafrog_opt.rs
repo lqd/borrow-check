@@ -17,42 +17,68 @@ use crate::output::{Context, Output, Unterner};
 use rustc_hash::FxHashSet;
 
 pub(super) fn compute<T: FactTypes>(
-    ctx: &Context<T>,
+    ctx: &mut Context<T>,
     result: &mut Output<T>,
-    unterner: &dyn Unterner<T>,
+    _unterner: &dyn Unterner<T>,
 ) -> Relation<(T::Loan, T::Point)> {
     let timer = Instant::now();
 
-    if let Some(potential_subset_errors) = &ctx.potential_subset_errors {
-        // The potential subset errors contain pairs of origins where the first origin has flowed
-        // into the second, and that wasn't explicitly declared. This quick analysis is done without
-        // taking the points at which the origin flows into the other, nor whether they were live
-        // at this point (the placeholder origins are always live at all points, but they can flow
-        // into dead origins at a given point, and then into another placeholder). These quick results
-        // need to be validated in order to have the correct set of subset errors, but are useful
-        // to show which placeholder origins could cause errors, and which subset relations connect
-        // the 2 placeholders.
-        // That means that placeholder origins absent from these errors, and the subset relations
-        // connecting them, are safe to ignore: only the subsets flowing from the first origin, and
-        // ultimately into the second origin will contribute to the resulting subset errors.
+    // println!("A - ctx.outlives: {}", ctx.outlives.len());
 
-        // If the potential subset errors have been computed, but there are no such possible errors,
-        // then we can be focus on just keeping the subsets facts which can cause an illegal access
-        // error
-        if !potential_subset_errors.is_empty() {
-            println!(
-                "some potential subset errors have been found: {}",
-                potential_subset_errors.len()
-            );
-            for &(origin1, origin2) in potential_subset_errors.iter() {
-                println!(
-                    "potential_subset_error: {} may unexpectedly flow into {}",
-                    unterner.untern_origin(origin1),
-                    unterner.untern_origin(origin2),
-                );
-            }
+    // Check the location-insensitive pre-pass results, to see if the facts used in this analysis
+    // can be filtered to focus on the ones related to the potential errors in the results.
+    match (&ctx.potential_errors, &ctx.potential_subset_errors) {
+        (None, None) => {
+            // No pre-filtering happened, we'll use the whole data
+        },
 
-            println!("outlives: {}", ctx.outlives.len());
+        (Some(_), None) | (None, Some(_)) => {
+            unreachable!("The pre-filtering only focused on one of the 2 types of errors")
+        }
+        
+        (Some(potential_errors), Some(potential_subset_errors)) if potential_errors.is_empty() && potential_subset_errors.is_empty() => {
+            unreachable!("The pre-filtering showed that no errors can be found at all in this analysis")
+        },
+
+        (Some(_potential_errors), Some(potential_subset_errors)) if potential_subset_errors.is_empty() => {
+            // Focus on loan and subset data connected to loans and origins for which an error can occur. 
+            // No subset errors can happen and a lot of connections to placeholder origins may be 
+            // ignored.
+            // No subset errors can happen, we can filter all the origins and subsets which can't
+            // cause illegal access errors: the facts which don't ultimately lead to a live loan
+            // being invalidated.
+        }
+
+        (Some(potential_errors), Some(potential_subset_errors)) if potential_errors.is_empty() => {
+            // Focus on subset data connected to placeholder origins. No loan errors can happen, so
+            // we don't really need to track all loans and origins and how they flow.
+            // The potential subset errors contain pairs of origins where the first origin has flowed
+            // into the second, and that wasn't explicitly declared. This quick analysis is done without
+            // taking the points at which the origin flows into the other, nor whether they were live
+            // at this point (the placeholder origins are always live at all points, but they can flow
+            // into dead origins at a given point, and then into another placeholder). These quick results
+            // need to be validated in order to have the correct set of subset errors, but are useful
+            // to show which placeholder origins could cause errors, and which subset relations connect
+            // the 2 placeholders.
+            // That means that placeholder origins absent from these errors, and the subset relations
+            // connecting them, are safe to ignore: only the subsets flowing from the first origin, and
+            // ultimately into the second origin will contribute to the resulting subset errors.
+
+            // If the potential subset errors have been computed, but there are no such possible errors,
+            // then we can be focus on just keeping the subsets facts which can cause an illegal access
+            // error
+            
+            // println!(
+            //     "some potential subset errors have been found: {}",
+            //     potential_subset_errors.len()
+            // );
+            // for &(origin1, origin2) in potential_subset_errors.iter() {
+            //     println!(
+            //         "potential_subset_error: {} may unexpectedly flow into {}",
+            //         unterner.untern_origin(origin1),
+            //         unterner.untern_origin(origin2),
+            //     );
+            // }
 
             let interesting_origin = {
                 let mut iteration = Iteration::new();
@@ -118,12 +144,12 @@ pub(super) fn compute<T: FactTypes>(
 
                 let placeholder1_superset = placeholder1_superset.complete();
                 // for &(origin, _) in placeholder1_superset.iter() {
-                //     println!("placeholder1_superset: {:?}", origin);
+                //     println!("placeholder1_superset: {}", unterner.untern_origin(origin));
                 // }
 
                 let placeholder2_subset = placeholder2_subset.complete();
                 // for &(origin, _) in placeholder2_subset.iter() {
-                //     println!("placeholder2_subset: {:?}", origin);
+                //     println!("placeholder2_subset: {}", unterner.untern_origin(origin));
                 // }
 
                 let placeholder1_superset: FxHashSet<_> = placeholder1_superset
@@ -135,8 +161,8 @@ pub(super) fn compute<T: FactTypes>(
                     .map(|&(origin, _)| origin)
                     .collect();
 
-                println!("placeholder1_superset: {}", placeholder1_superset.len());
-                println!("placeholder2_subset: {}", placeholder2_subset.len());
+                // println!("placeholder1_superset: {}", placeholder1_superset.len());
+                // println!("placeholder2_subset: {}", placeholder2_subset.len());
 
                 // This relation will contain the critical path connecting the origins in the subset
                 // error: the origins dowstream from the source, and upstream from the destination.
@@ -144,8 +170,8 @@ pub(super) fn compute<T: FactTypes>(
                     .intersection(&placeholder2_subset)
                     .copied()
                     .collect();
-                println!("critical_path: {}", critical_path.len());
-                // println!("critical_path: {:?}", critical_path);
+                // println!("critical_path: {}", critical_path.len());
+                // // println!("critical_path: {:?}", critical_path);
 
                 critical_path
             };
@@ -154,23 +180,53 @@ pub(super) fn compute<T: FactTypes>(
 
             // The subsets flowing from an interesting origin are interesting, they're the
             // critical path connecting the source origin to the destination origin.
-            for &(origin1, _origin2, _) in ctx.outlives {
-                let is_interesting = interesting_origin.contains(&origin1);
-                println!(
-                    "outlives {} -> {} interesting: {}",
-                    unterner.untern_origin(origin1),
-                    unterner.untern_origin(_origin2),
-                    is_interesting
-                );
-                if !is_interesting {
-                    panic!("found an interesting case to test filtering, there are potential subset errors and uninteresting `outlives` here");
-                }
-            }
-        } else {
-            // No subset errors can happen, we can filter all the origins and subsets which can't
-            // cause illegal access errors: the facts which don't ultimately lead to a live loan
-            // being invalidated.
-            println!("no subset errors can happen, let's filter even more");
+            // for &(origin1, _origin2, _) in ctx.outlives {
+            //     let is_interesting = interesting_origin.contains(&origin1);
+            //     // if !is_interesting {
+            //         println!(
+            //             "outlives {} -> {} / interesting: {}",
+            //             unterner.untern_origin(origin1),
+            //             unterner.untern_origin(_origin2),
+            //             is_interesting
+            //         );
+            //     // }
+            // }
+
+            // for &(origin, _) in ctx.region_live_at.iter() {
+            //     let is_interesting = interesting_origin.contains(&origin);
+            //     // if !is_interesting {
+            //         println!(
+            //             "region_live_at {} / interesting: {}",
+            //             unterner.untern_origin(origin),
+            //             is_interesting
+            //         );
+            //     // }
+            // }
+
+            // for &(origin, _, _) in ctx.borrow_region.iter() {
+            //     let is_interesting = interesting_origin.contains(&origin);
+            //     // if !is_interesting {
+            //         println!(
+            //             "borrow_region {} / interesting: {}",
+            //             unterner.untern_origin(origin),
+            //             is_interesting
+            //         );
+            //     // }
+            // }
+
+            let count = ctx.outlives.len();
+            ctx.outlives.retain(|&(origin1, _, _)| interesting_origin.contains(&origin1));            
+            println!("outlives facts filtered: {} -> {}", count, ctx.outlives.len());
+
+            let count = ctx.region_live_at.len();
+            ctx.region_live_at = ctx.region_live_at.elements.iter().filter(|&(origin, _)| interesting_origin.contains(&origin)).collect();
+            println!("region_live_at facts filtered: {} -> {}", count, ctx.region_live_at.len());
+        }
+
+        (Some(_potential_errors), Some(_potential_subset_errors)) => {
+            // Focus on the union of :
+            // - loan and subset data connected to potential loan errors
+            // - placeholder and subset data connected to potential subset errors             
         }
     }
 

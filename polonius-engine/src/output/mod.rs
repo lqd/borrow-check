@@ -131,7 +131,7 @@ pub struct Context<'ctx, T: FactTypes> {
     pub invalidates: Relation<(T::Loan, T::Point)>,
 
     // static inputs used via `Variable`s, by all variants
-    pub outlives: &'ctx Vec<(T::Origin, T::Origin, T::Point)>,
+    pub outlives: &'ctx mut Vec<(T::Origin, T::Origin, T::Point)>,
     pub borrow_region: &'ctx Vec<(T::Origin, T::Loan, T::Point)>,
 
     // static inputs used by variants other than `LocationInsensitive`
@@ -311,7 +311,7 @@ impl<T: FactTypes> Output<T> {
             invalidates,
             cfg_edge,
             cfg_node: &cfg_node,
-            outlives: &all_facts.outlives,
+            outlives: &mut all_facts.outlives.clone(),
             borrow_region: &all_facts.borrow_region,
             killed,
             known_subset,
@@ -353,7 +353,7 @@ impl<T: FactTypes> Output<T> {
 
                 errors
             }
-            Algorithm::DatafrogOpt => datafrog_opt::compute(&ctx, &mut result, unterner.expect("we need an unterner")),
+            Algorithm::DatafrogOpt => datafrog_opt::compute(&mut ctx, &mut result, unterner.expect("we need an unterner")),
             Algorithm::Hybrid => {
                 // WIP: the `LocationInsensitive` variant doesn't compute any illegal subset
                 // relation errors. So using it as a quick pre-filter for illegal accesses
@@ -373,13 +373,13 @@ impl<T: FactTypes> Output<T> {
                         Some(potential_errors.iter().map(|&(loan, _)| loan).collect());
                     ctx.potential_subset_errors = Some(potential_subset_errors);
 
-                    datafrog_opt::compute(&ctx, &mut result, unterner.expect("we need an unterner"))
+                    datafrog_opt::compute(&mut ctx, &mut result, unterner.expect("we need an unterner"))
                 }
             }
             Algorithm::Compare => {
                 // Ensure the `Naive` and `DatafrogOpt` errors are the same
                 let (naive_errors, _) = naive::compute(&ctx, &mut result);
-                let opt_errors = datafrog_opt::compute(&ctx, &mut result, unterner.expect("we need an unterner"));
+                let opt_errors = datafrog_opt::compute(&mut ctx, &mut result, unterner.expect("we need an unterner"));
 
                 // TODO: compare illegal subset relations errors as well here ?
 
