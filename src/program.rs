@@ -31,6 +31,7 @@ struct Facts {
     path_assigned_at_base: BTreeSet<(Path, Point)>,
     path_moved_at_base: BTreeSet<(Path, Point)>,
     path_accessed_at_base: BTreeSet<(Path, Point)>,
+    outlives_everywhere: BTreeSet<(Origin, Origin)>,
 }
 
 impl From<Facts> for AllFacts {
@@ -54,6 +55,7 @@ impl From<Facts> for AllFacts {
             path_accessed_at_base: facts.path_accessed_at_base.into_iter().collect(),
             known_subset: facts.known_subset.into_iter().collect(),
             placeholder: facts.placeholder.into_iter().collect(),
+            outlives_everywhere: facts.outlives_everywhere.into_iter().collect(),
         }
     }
 }

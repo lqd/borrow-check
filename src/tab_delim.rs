@@ -51,6 +51,7 @@ pub(crate) fn load_tab_delimited_facts(
             path_accessed_at_base,
             known_subset,
             placeholder,
+            outlives_everywhere,
         }
     }
 }

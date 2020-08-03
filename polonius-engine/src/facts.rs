@@ -21,6 +21,10 @@ pub struct AllFacts<T: FactTypes> {
     /// `outlives(origin1, origin2, point)` when we require `origin1@point: origin2@point`
     pub outlives: Vec<(T::Origin, T::Origin, T::Point)>,
 
+    /// `outlives_everywhere(origin1, origin2)` when we require `origin1: origin2`
+    /// at all points in the CFG.
+    pub outlives_everywhere: Vec<(T::Origin, T::Origin)>,
+
     /// `invalidates(point, loan)` when the `loan` is invalidated at `point`
     pub invalidates: Vec<(T::Point, T::Loan)>,
 
@@ -101,6 +105,7 @@ impl<T: FactTypes> Default for AllFacts<T> {
             path_accessed_at_base: Vec::default(),
             known_subset: Vec::default(),
             placeholder: Vec::default(),
+            outlives_everywhere: Vec::default(),
         }
     }
 }
