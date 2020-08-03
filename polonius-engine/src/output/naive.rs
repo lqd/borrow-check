@@ -35,6 +35,8 @@ pub(super) fn compute<T: FactTypes>(
         let placeholder_origin = &ctx.placeholder_origin;
         let placeholder_loan = &ctx.placeholder_loan;
 
+        let outlives_everywhere = &ctx.outlives_everywhere;
+
         // Create a new iteration context, ...
         let mut iteration = Iteration::new();
 
@@ -128,6 +130,15 @@ pub(super) fn compute<T: FactTypes>(
                 |&(_origin2, point), &origin1, &origin3| (origin1, origin3, point),
             );
 
+            // subset(origin1, origin3, point) :-
+            //   subset(origin1, origin2, point),
+            //   outlives_everywhere(origin2, origin3).
+            subset.from_leapjoin(
+                &subset,
+                outlives_everywhere.extend_with(|&(_origin1, origin2, _point)| origin2),
+                |&(origin1, _origin2, point), &origin3| (origin1, origin3, point),
+            );
+
             // subset(origin1, origin2, point2) :-
             //   subset(origin1, origin2, point1),
             //   cfg_edge(point1, point2),
@@ -153,6 +164,15 @@ pub(super) fn compute<T: FactTypes>(
                 &requires_op,
                 &subset_o1p,
                 |&(_origin1, point), &loan, &origin2| (origin2, loan, point),
+            );
+
+            // requires(origin2, loan, point) :-
+            //   requires(origin1, loan, point),
+            //   outlives_everywhere(origin1, origin2).
+            requires.from_leapjoin(
+                &requires,
+                outlives_everywhere.extend_with(|&(origin1, _, _)| origin1),
+                |&(_origin1, loan, point), &origin2| (origin2, loan, point),
             );
 
             // requires(origin, loan, point2) :-
