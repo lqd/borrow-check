@@ -20,6 +20,7 @@ mod initialization;
 mod liveness;
 mod location_insensitive;
 mod naive;
+mod prototype;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Algorithm {
@@ -40,19 +41,22 @@ pub enum Algorithm {
     /// Combination of the fast `LocationInsensitive` pre-pass, followed by
     /// the more expensive `DatafrogOpt` variant.
     Hybrid,
+
+    Prototype,
 }
 
 impl Algorithm {
     /// Optimized variants that ought to be equivalent to "naive"
     pub const OPTIMIZED: &'static [Algorithm] = &[Algorithm::DatafrogOpt];
 
-    pub fn variants() -> [&'static str; 5] {
+    pub fn variants() -> [&'static str; 6] {
         [
             "Naive",
             "DatafrogOpt",
             "LocationInsensitive",
             "Compare",
             "Hybrid",
+            "Prototype",
         ]
     }
 }
@@ -66,8 +70,9 @@ impl ::std::str::FromStr for Algorithm {
             "locationinsensitive" => Ok(Algorithm::LocationInsensitive),
             "compare" => Ok(Algorithm::Compare),
             "hybrid" => Ok(Algorithm::Hybrid),
+            "prototype" => Ok(Algorithm::Prototype),
             _ => Err(String::from(
-                "valid values: Naive, DatafrogOpt, LocationInsensitive, Compare, Hybrid",
+                "valid values: Naive, DatafrogOpt, LocationInsensitive, Compare, Hybrid, Prototype",
             )),
         }
     }
@@ -271,6 +276,20 @@ impl<T: FactTypes> Output<T> {
 
         let errors = match algorithm {
             Algorithm::LocationInsensitive => location_insensitive::compute(&ctx, &mut result),
+            Algorithm::Prototype => {
+                let (errors, subset_errors) = prototype::compute(&ctx, &mut result);
+
+                // Record illegal subset errors
+                for &(origin1, origin2, location) in subset_errors.iter() {
+                    result
+                        .subset_errors
+                        .entry(location)
+                        .or_default()
+                        .insert((origin1, origin2));
+                }
+
+                errors
+            }
             Algorithm::Naive => {
                 let (errors, subset_errors) = naive::compute(&ctx, &mut result);
 
