@@ -725,7 +725,7 @@ fn basic_move_error() {
 
     assert_eq!(result.move_errors.len(), 1);
 
-    let error_point = tables.points.intern("\"Mid(bb9[20])\"");
+    let error_point = tables.points.intern("\"Mid(bb5[20])\"");
     let move_errors = result.move_errors.get(&error_point).unwrap();
     assert_eq!(move_errors.len(), 1);
 
