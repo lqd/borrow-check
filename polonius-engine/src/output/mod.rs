@@ -123,6 +123,8 @@ struct Context<'ctx, T: FactTypes> {
 
     // static inputs used via `Variable`s, by all variants
     outlives: &'ctx Vec<(T::Origin, T::Origin, T::Point)>,
+    outlives_everywhere: Relation<(T::Origin, T::Origin)>,
+
     borrow_region: &'ctx Vec<(T::Origin, T::Loan, T::Point)>,
 
     // static inputs used by variants other than `LocationInsensitive`
@@ -261,6 +263,7 @@ impl<T: FactTypes> Output<T> {
             cfg_edge,
             cfg_node: &cfg_node,
             outlives: &all_facts.outlives,
+            outlives_everywhere: all_facts.outlives_everywhere.clone().into(),
             borrow_region: &all_facts.borrow_region,
             killed,
             known_contains,
