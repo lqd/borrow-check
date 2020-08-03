@@ -108,6 +108,7 @@ tests! {
     vec_push_ref_foo3("vec-push-ref", "foo3"),
     polonius_imprecision_cycle_unification("polonius-imprecision", "cycle_unification"),
     polonius_imprecision_cfg_propagation_required("polonius-imprecision", "cfg_propagation_required"),
+    polonius_imprecision_flow_sensitive_equality_required("polonius-imprecision", "flow_sensitive_equality_required"),
 }
 
 // The `clap` dataset is an important benchmark, and slow enough that's it not checked in tests.
@@ -793,4 +794,25 @@ fn conditional_init() {
     let move_errors = result.move_errors.get(&error_point).unwrap();
     assert_eq!(move_errors.len(), 1);
     assert_eq!(move_errors[0], tables.paths.intern("\"mp1\""));
+}
+
+#[test]
+fn polonius_versus_equality() {
+    let facts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("inputs")
+        .join("polonius-imprecision")
+        .join("nll-facts")
+        .join("unnecessary_error");
+    let tables = &mut intern::InternerTables::new();
+    let facts = tab_delim::load_tab_delimited_facts(tables, &facts_dir).expect("facts");
+
+    // Polonius finds an unnecessary error
+    let naive = Output::compute(&facts, Algorithm::Naive, true);
+    assert_eq!(naive.errors.len(), 1);
+    assert!(naive.subset_errors.is_empty());
+
+    // The flow-sensitive equality prototype doesn't
+    let proto = Output::compute(&facts, Algorithm::Prototype, true);
+    assert!(proto.errors.is_empty());
+    assert!(proto.subset_errors.is_empty());
 }
