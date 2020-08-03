@@ -29,18 +29,21 @@ pub(super) fn compute<T: FactTypes>(
         let mut iteration = Iteration::new();
 
         // .. some variables, ..
-        let subset = iteration.variable::<(T::Origin, T::Origin)>("subset");
         let requires = iteration.variable::<(T::Origin, T::Loan)>("requires");
-
         let potential_errors = iteration.variable::<(T::Loan, T::Point)>("potential_errors");
 
         // load initial facts.
 
-        // subset(origin1, origin2) :- outlives(origin1, origin2, _point)
-        subset.extend(
+        // subset(origin1, origin2) :-
+        //   outlives(origin1, origin2, _point).
+        //
+        // subset(origin1, origin2) :-
+        //   outlives_everywhere(origin1, origin2).
+        let subset = Relation::from_iter(
             ctx.outlives
                 .iter()
-                .map(|&(origin1, origin2, _point)| (origin1, origin2)),
+                .map(|&(origin1, origin2, _point)| (origin1, origin2))
+                .chain(ctx.outlives_everywhere.iter().copied())
         );
 
         // requires(origin, loan) :- borrow_region(origin, loan, _point).
@@ -84,7 +87,6 @@ pub(super) fn compute<T: FactTypes>(
         }
 
         if result.dump_enabled {
-            let subset = subset.complete();
             for &(origin1, origin2) in subset.iter() {
                 result
                     .subset_anywhere
